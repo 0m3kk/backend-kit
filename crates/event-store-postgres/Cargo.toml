@@ -1,0 +1,19 @@
+[package]
+name = "event-store-postgres"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+async-stream = "0.3"
+async-trait = "0.1"
+event-sourcing = { path = "../event-sourcing" }
+futures-util = "0.3"
+serde_json = "1.0"
+sqlx = { version = "=0.8.6", features = ["postgres", "runtime-tokio", "json", "macros"] }
+tokio = { version = "1.53", features = ["time"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

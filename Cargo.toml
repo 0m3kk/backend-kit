@@ -1,3 +1,12 @@
 [workspace]
 resolver = "3"
-members  = ["crates/empty"]
+members = [
+    "crates/event-sourcing",
+    "crates/event-store-memory",
+    "crates/event-store-postgres",
+    "crates/event-store-umadb",
+]
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

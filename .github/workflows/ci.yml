@@ -14,7 +14,8 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
@@ -24,7 +25,8 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
@@ -34,7 +36,8 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
@@ -43,7 +46,32 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      umadb:
+        image: umadb/umadb:latest
+        ports:
+          - 50051:50051
+
+    env:
+      DATABASE_URL: postgres://postgres:password@localhost:5432/postgres
+      UMADB_URL: http://localhost:50051
+
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: make test

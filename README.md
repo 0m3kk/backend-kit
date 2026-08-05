@@ -1,6 +1,17 @@
 # Backend Kit
 
-Rust workspace project.
+A collection of foundational Rust backend libraries and components.
+
+## Workspace Crates Index
+
+| Crate                      | Path                                                                   | Description                                                                                                                           |
+| :------------------------- | :--------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
+| **`event-sourcing`**       | [`crates/event-sourcing`](crates/event-sourcing/README.md)             | DCB (Dynamic Consistency Boundaries) core specification, types & `EventStore` trait ([dcb.events](https://dcb.events/specification/)) |
+| **`event-store-memory`**   | [`crates/event-store-memory`](crates/event-store-memory/README.md)     | In-memory `EventStore` implementation for local development and testing                                                               |
+| **`event-store-postgres`** | [`crates/event-store-postgres`](crates/event-store-postgres/README.md) | PostgreSQL `EventStore` implementation using GIN array indexing and atomic transactions                                               |
+| **`event-store-umadb`**    | [`crates/event-store-umadb`](crates/event-store-umadb/README.md)       | UmaDB gRPC `EventStore` implementation for Dynamic Consistency Boundaries ([umadb.io](https://umadb.io))                              |
+
+---
 
 ## Commands
 
