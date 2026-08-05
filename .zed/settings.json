@@ -7,5 +7,16 @@
         }
       }
     }
+  },
+  "languages": {
+    "SQL": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "npx",
+          "arguments": ["--yes", "sql-formatter", "--config", ".sql-formatter.json"]
+        }
+      }
+    }
   }
 }

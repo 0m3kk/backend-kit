@@ -54,14 +54,17 @@ crate-remove: ## Remove crate (usage: make crate-remove xxx)
 	@rm -rf crates/$(word 2, $(MAKECMDGOALS))
 	$(MAKE) sort
 
+version: ## Bump version (usage: make version major|minor|patch)
+	cargo workspaces version $(word 2, $(MAKECMDGOALS)) -y --allow-branch main
+
 version-patch: ## Bump patch version (0.1.0 -> 0.1.1)
-	cargo workspaces version patch
+	cargo workspaces version patch -y --allow-branch main
 
 version-minor: ## Bump minor version (0.1.0 -> 0.2.0)
-	cargo workspaces version minor
+	cargo workspaces version minor -y --allow-branch main
 
 version-major: ## Bump major version (0.1.0 -> 1.0.0)
-	cargo workspaces version major
+	cargo workspaces version major -y --allow-branch main
 
 # Ignore extra arguments passed to targets
 %:
