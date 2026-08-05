@@ -1,0 +1,6 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# For service initialization functions, use:
+# #[allow(clippy::unwrap_used)]
+# #[allow(clippy::expect_used)]
