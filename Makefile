@@ -15,6 +15,7 @@ lint: ## Run clippy
 
 fmt: ## Format code
 	cargo fmt --all
+	$(MAKE) remove-unused
 	$(MAKE) sort
 	$(MAKE) sql-fmt
 	$(MAKE) prettier
@@ -32,10 +33,10 @@ remove-unused: ## Remove unused dependencies
 	cargo machete --fix
 
 upgrade: ## Upgrade dependencies (compatible versions)
-	cargo upgrade --workspace
+	cargo upgrade
 
 upgrade-latest: ## Upgrade dependencies to latest versions
-	cargo upgrade --workspace --incompatible
+	cargo upgrade --incompatible
 
 sql-fmt: ## Format SQL files
 	@find . -name "*.sql" -exec sql-formatter -l postgresql -o {} {} \;
