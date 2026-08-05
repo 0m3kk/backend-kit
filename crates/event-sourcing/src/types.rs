@@ -1,6 +1,29 @@
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
+
+/// Trait implemented by strongly-typed domain events representing payload data in an [`Event`].
+pub trait DomainEvent: Serialize + DeserializeOwned + Send + Sync + 'static {
+    /// Returns the static [`EventType`] name for this domain event (e.g. `"OrderCreated"`).
+    fn event_type() -> EventType
+    where
+        Self: Sized;
+
+    /// Optional tags associated with instances of this domain event (e.g. `Tag::key_value("order", "100")`).
+    fn tags(&self) -> Vec<Tag> {
+        Vec::new()
+    }
+
+    /// Helper method to create an unsequenced [`Event`] wrapping this domain event instance.
+    fn to_event(&self, id: impl Into<EventId>) -> Result<Event, serde_json::Error>
+    where
+        Self: Sized,
+    {
+        let data = serde_json::to_value(self)?;
+        Ok(Event::new(id, Self::event_type(), data, self.tags()))
+    }
+}
 
 /// Unique identifier for an unsequenced domain event.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -155,6 +178,19 @@ impl Event {
         self.metadata = Some(metadata);
         self
     }
+
+    /// Deserializes the JSON `data` payload of this event into a strongly-typed [`DomainEvent`].
+    pub fn to_domain_event<T: DomainEvent>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self.data.clone())
+    }
+
+    /// Creates an [`Event`] from a strongly-typed [`DomainEvent`] instance and an event ID.
+    pub fn from_domain_event<T: DomainEvent>(
+        id: impl Into<EventId>,
+        domain_event: &T,
+    ) -> Result<Self, serde_json::Error> {
+        domain_event.to_event(id)
+    }
 }
 
 /// An event that has been assigned a SequencePosition and timestamp by the Event Store upon append.
@@ -175,6 +211,11 @@ impl SequencedEvent {
             timestamp,
             event,
         }
+    }
+
+    /// Deserializes the inner event's JSON `data` payload into a strongly-typed [`DomainEvent`].
+    pub fn to_domain_event<T: DomainEvent>(&self) -> Result<T, serde_json::Error> {
+        self.event.to_domain_event()
     }
 }
 
