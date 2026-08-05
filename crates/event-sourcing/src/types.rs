@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fmt;
 
@@ -276,6 +277,40 @@ impl QueryItem {
 
         true
     }
+
+    /// Generates an order-independent canonical string representation for this query item.
+    pub fn canonical_string(&self) -> String {
+        let mut types: Vec<&str> = self.types.iter().map(|t| t.as_str()).collect();
+        types.sort_unstable();
+
+        let mut tags: Vec<&str> = self.tags.iter().map(|t| t.as_str()).collect();
+        tags.sort_unstable();
+
+        format!("types:[{}];tags:[{}]", types.join(","), tags.join(","))
+    }
+
+    /// Returns true if `self` subsumes `other` (i.e. any event matching `other` is guaranteed to match `self`).
+    pub fn subsumes(&self, other: &QueryItem) -> bool {
+        let types_ok = if self.types.is_empty() {
+            true
+        } else if other.types.is_empty() {
+            false
+        } else {
+            other.types.iter().all(|t| self.types.contains(t))
+        };
+
+        if !types_ok {
+            return false;
+        }
+
+        if self.tags.is_empty() {
+            true
+        } else if other.tags.is_empty() {
+            false
+        } else {
+            self.tags.iter().all(|t| other.tags.contains(t))
+        }
+    }
 }
 
 /// Query representing constraints that must be matched by events in the Event Store.
@@ -318,6 +353,73 @@ impl Query {
                 } else {
                     items.iter().any(|item| item.matches(event))
                 }
+            }
+        }
+    }
+
+    /// Generates an order-independent canonical string representation of this query.
+    pub fn canonical_string(&self) -> String {
+        match self {
+            Query::All => "ALL".to_string(),
+            Query::Items { items } => {
+                let mut item_strings: Vec<String> =
+                    items.iter().map(|i| i.canonical_string()).collect();
+                item_strings.sort_unstable();
+                item_strings.join("|")
+            }
+        }
+    }
+
+    /// Computes a deterministic SHA-256 fingerprint hex hash string for this query.
+    ///
+    /// The fingerprint is order-independent: queries with identical types and tags specified in different order
+    /// produce identical fingerprints.
+    pub fn fingerprint(&self) -> String {
+        let canonical = self.canonical_string();
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Combines multiple queries into a single optimized query using OR logic.
+    pub fn combine(queries: impl IntoIterator<Item = Query>) -> Self {
+        let mut combined_items: Vec<QueryItem> = Vec::new();
+
+        for query in queries {
+            match query {
+                Query::All => return Query::All,
+                Query::Items { items } => {
+                    for item in items {
+                        let mut opt_item = item;
+                        opt_item.types.sort_by(|a, b| a.0.cmp(&b.0));
+                        opt_item.types.dedup();
+                        opt_item.tags.sort_by(|a, b| a.0.cmp(&b.0));
+                        opt_item.tags.dedup();
+
+                        if opt_item.types.is_empty() && opt_item.tags.is_empty() {
+                            return Query::All;
+                        }
+
+                        if combined_items
+                            .iter()
+                            .any(|existing| existing.subsumes(&opt_item))
+                        {
+                            continue;
+                        }
+
+                        combined_items.retain(|existing| !opt_item.subsumes(existing));
+                        combined_items.push(opt_item);
+                    }
+                }
+            }
+        }
+
+        if combined_items.is_empty() {
+            Query::All
+        } else {
+            combined_items.sort_by_key(|a| a.canonical_string());
+            Query::Items {
+                items: combined_items,
             }
         }
     }
