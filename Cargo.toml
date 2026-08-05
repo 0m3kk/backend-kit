@@ -1,3 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/event-sourcing", "crates/event-store-memory"]
+members = [
+    "crates/event-sourcing",
+    "crates/event-store-memory",
+    "crates/event-store-postgres",
+]

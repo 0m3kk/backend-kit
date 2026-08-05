@@ -1,3 +1,7 @@
+USER ?= $(shell whoami)
+DATABASE_URL ?= postgres://$(USER)@localhost:5432/postgres
+export DATABASE_URL
+
 .PHONY: install-tools check lint fmt fmt-check test sort upgrade upgrade-latest remove-unused sql-fmt prettier crate-add-lib crate-add-bin crate-remove help
 
 help: ## Show this help
