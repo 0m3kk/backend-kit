@@ -4,7 +4,7 @@ use std::fmt;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce as AesNonce};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce as ChaChaNonce};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::errors::SecretError;
 use crate::types::{CipherAlgorithm, EncryptedPayload};
@@ -95,7 +95,7 @@ impl KeyRing {
             .ok_or_else(|| SecretError::InvalidKey("Key ring is empty".to_string()))?;
 
         let mut nonce = vec![0u8; 12];
-        rand::thread_rng().fill(&mut nonce[..]);
+        rand::rng().fill(&mut nonce[..]);
 
         let cipher_key = aes_gcm::Key::<Aes256Gcm>::from(kek.key);
         let cipher = Aes256Gcm::new(&cipher_key);
@@ -148,7 +148,7 @@ impl KeyRing {
 /// Generates a fresh 32-byte random Data Encryption Key (DEK).
 pub fn generate_dek() -> Result<[u8; KEY_LEN], SecretError> {
     let mut dek = [0u8; KEY_LEN];
-    rand::thread_rng().fill(&mut dek);
+    rand::rng().fill(&mut dek);
     Ok(dek)
 }
 
@@ -166,7 +166,7 @@ impl SecretCrypto {
         let (wrapped_dek, kek_version) = keyring.wrap_dek(&dek)?;
 
         let mut nonce = vec![0u8; 12];
-        rand::thread_rng().fill(&mut nonce[..]);
+        rand::rng().fill(&mut nonce[..]);
 
         let ciphertext = match cipher_algo {
             CipherAlgorithm::Aes256Gcm => {
