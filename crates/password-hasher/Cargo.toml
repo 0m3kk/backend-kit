@@ -1,0 +1,30 @@
+[package]
+name = "password-hasher"
+version = "0.1.0"
+edition = "2024"
+description = "Universal password hashing crate supporting Argon2id, Bcrypt, PBKDF2, PHC hash format auto-detection, and async capabilities."
+
+[features]
+default = ["argon2", "bcrypt", "async", "noop"]
+argon2 = ["dep:argon2"]
+async = ["dep:tokio", "dep:async-trait"]
+bcrypt = ["dep:bcrypt"]
+noop = []
+pbkdf2 = ["dep:pbkdf2"]
+
+[dependencies]
+argon2 = { version = "0.5", features = ["std", "password-hash"], optional = true }
+async-trait = { version = "0.1", optional = true }
+bcrypt = { version = "0.19", optional = true }
+password-hash = { version = "0.6", features = ["rand_core"] }
+pbkdf2 = { version = "0.13", features = ["simple", "hmac"], optional = true }
+rand_core = { version = "0.10", features = ["getrandom"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.53", features = ["rt", "sync"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
