@@ -136,20 +136,30 @@ async fn test_memory_key_rotation() -> Result<(), SecretError> {
 #[tokio::test]
 async fn test_memory_expiration() -> Result<(), SecretError> {
     let store = MemorySecretStore::with_master_key([99u8; KEY_LEN])?;
-    let path = SecretPath::new("temp/session_key")?;
+    let active_path = SecretPath::new("temp/active_key")?;
 
     store
         .set(
-            path.clone(),
-            SecretValue::from("temp_val"),
-            SetSecretOptions::new().with_ttl(Duration::from_millis(50)),
+            active_path.clone(),
+            SecretValue::from("active_val"),
+            SetSecretOptions::new().with_ttl(Duration::from_secs(5)),
         )
         .await?;
 
-    assert!(store.get(&path).await?.is_some());
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert!(store.get(&active_path).await?.is_some());
 
-    assert!(store.get(&path).await?.is_none());
+    let exp_path = SecretPath::new("temp/expiring_key")?;
+    store
+        .set(
+            exp_path.clone(),
+            SecretValue::from("temp_val"),
+            SetSecretOptions::new().with_ttl(Duration::from_millis(20)),
+        )
+        .await?;
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert!(store.get(&exp_path).await?.is_none());
 
     let cleaned = store.clean_expired(None).await?;
     assert_eq!(cleaned, 1);

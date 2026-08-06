@@ -124,20 +124,31 @@ async fn test_postgres_secret_expiration(pool: PgPool) {
     let keyring = create_keyring();
     let store = PostgresSecretStore::new(pool, keyring, CipherAlgorithm::Aes256Gcm);
 
-    let path = SecretPath::new("temp/token").unwrap();
+    let active_path = SecretPath::new("temp/active_token").unwrap();
     store
         .set(
-            path.clone(),
-            SecretValue::from("temp_val"),
-            SetSecretOptions::new().with_ttl(Duration::from_millis(50)),
+            active_path.clone(),
+            SecretValue::from("active_val"),
+            SetSecretOptions::new().with_ttl(Duration::from_secs(5)),
         )
         .await
         .unwrap();
 
-    assert!(store.get(&path).await.unwrap().is_some());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(store.get(&active_path).await.unwrap().is_some());
 
-    assert!(store.get(&path).await.unwrap().is_none());
+    let exp_path = SecretPath::new("temp/expired_token").unwrap();
+    store
+        .set(
+            exp_path.clone(),
+            SecretValue::from("expired_val"),
+            SetSecretOptions::new().with_ttl(Duration::from_millis(20)),
+        )
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    assert!(store.get(&exp_path).await.unwrap().is_none());
 
     let cleaned = store.clean_expired(None).await.unwrap();
     assert_eq!(cleaned, 1);
