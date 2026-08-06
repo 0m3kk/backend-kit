@@ -12,7 +12,7 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 install-tools: ## Install required cargo tools
-	cargo install cargo-sort cargo-machete cargo-upgrades cargo-workspace
+	cargo install cargo-sort cargo-machete cargo-upgrades cargo-workspaces
 	npm install -g sql-formatter prettier
 
 check: ## Check workspace

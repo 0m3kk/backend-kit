@@ -12,12 +12,12 @@ A production-grade, modular collection of foundational Rust backend libraries an
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                                   Backend Kit                                    │
 └──────────────────────────────────────────────────────────────────────────────────┘
-   ├── Event Sourcing & CQRS ──► event-sourcing, event-store-postgres, event-store-umadb, cqrs
-   ├── Key-Value Storage     ──► kv-store, kv-store-postgres, kv-store-redb, kv-store-redis
-   ├── Secret Management     ──► secret-store, secret-store-postgres
-   ├── Password Hashing      ──► password-hasher, password-hasher-argon2, password-hasher-bcrypt
-   ├── Email Delivery        ──► email-sender, email-sender-resend, email-sender-sendgrid, email-sender-smtp
-   └── Template Engines      ──► template-engine, template-engine-askama, template-engine-tera
+├── Event Sourcing & CQRS ──► event-sourcing, event-store-postgres, event-store-umadb, cqrs
+├── Key-Value Storage     ──► kv-store, kv-store-postgres, kv-store-redb, kv-store-redis
+├── Secret Management     ──► secret-store, secret-store-postgres
+├── Password Hashing      ──► password-hasher, password-hasher-argon2, password-hasher-bcrypt
+├── Email Delivery        ──► email-sender, email-sender-resend, email-sender-sendgrid, email-sender-smtp
+└── Template Engines      ──► template-engine, template-engine-askama, template-engine-tera
 ```
 
 ### Key Design Principles
