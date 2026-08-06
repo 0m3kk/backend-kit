@@ -1,35 +1,44 @@
 # password-hasher
 
-Universal password hashing library for backend-kit with support for Argon2id, Bcrypt, PBKDF2-SHA256, PHC format auto-detection, seamless algorithm migration, and async capabilities.
+Core traits, types, and manager for password hashing in backend-kit. Algorithm implementations live in separate crates:
+
+| Crate                    | Description                         |
+| :----------------------- | :---------------------------------- |
+| `password-hasher`        | Core traits, types, errors, manager |
+| `password-hasher-argon2` | Argon2id algorithm implementation   |
+| `password-hasher-bcrypt` | Bcrypt algorithm implementation     |
+| `password-hasher-noop`   | No-op hasher for testing            |
 
 ## Features
 
-- **Argon2id (OWASP Recommended)**: Modern memory-hard password hashing algorithm backed by standard `argon2` crate.
-- **Bcrypt**: Legacy and widespread password hashing algorithm support (`$2b$` standard).
-- **PBKDF2-SHA256**: NIST-compliant password hashing algorithm support (`$pbkdf2-sha256$` standard).
-- **No-op / Plaintext Hasher**: Fast, zero-computation hasher for unit testing and local benchmarking (`noop` feature).
-- **PHC String Auto-Detection**: Standardized format parser (`$argon2id$`, `$2b$`, `$pbkdf2-sha256$`, `$noop$`) to automatically detect algorithms during verification.
-- **`PasswordHasherManager`**: Universal router managing password hash verification, auto-dispatch, and detecting when existing hashes require re-hashing (`needs_rehash`) for seamless password security upgrades.
-- **Async Threadpool Offloading**: Optional Tokio `spawn_blocking` integration (`AsyncPasswordHasher` trait) preventing CPU-heavy hashing loops from blocking async event loops.
+- **`PasswordHasher` trait**: Universal synchronous password hasher interface (`hash_password`, `verify_password`, `algorithm`).
+- **`AsyncPasswordHasher` trait**: Async variant offloading CPU-heavy hashing to Tokio's `spawn_blocking` threadpool.
+- **`PasswordHasherManager`**: Multi-algorithm router with auto-detection from PHC hash format, `needs_rehash()` for seamless algorithm migration, and `verify_password_str()` for string-based verification.
+- **`PasswordHash`**: Strongly-typed wrapper with PHC string auto-detection (`$argon2id$`, `$2b$`, `$noop$`).
+- **`Algorithm` enum**: `Argon2id`, `Bcrypt`, `Noop`.
 
 ## Feature Flags
 
-| Feature  | Description                                                  | Default |
-| :------- | :----------------------------------------------------------- | :------ |
-| `argon2` | Argon2id password hasher support                             | **Yes** |
-| `bcrypt` | Bcrypt password hasher support                               | **Yes** |
-| `pbkdf2` | PBKDF2-HMAC-SHA256 password hasher support                   | No      |
-| `async`  | Tokio `AsyncPasswordHasher` trait and spawn_blocking helpers | **Yes** |
-| `noop`   | `NoopHasher` for mock testing                                | **Yes** |
+| Feature | Description                                                  | Default |
+| :------ | :----------------------------------------------------------- | :------ |
+| `async` | Tokio `AsyncPasswordHasher` trait and spawn_blocking helpers | **Yes** |
 
-## Code Example
+## Usage
+
+Depend on an algorithm crate instead of the core crate directly — each implementation re-exports everything from `password-hasher`:
+
+```toml
+[dependencies]
+password-hasher-argon2 = { path = "../password-hasher-argon2" }
+password-hasher-bcrypt = { path = "../password-hasher-bcrypt" }
+```
 
 ### Synchronous Password Hashing & Auto-Verification
 
 ```rust
-use password_hasher::{
-    Argon2Hasher, BcryptHasher, PasswordHash, PasswordHasher, PasswordHasherManager,
-};
+use password_hasher::{PasswordHash, PasswordHasher, PasswordHasherManager};
+use password_hasher_argon2::Argon2Hasher;
+use password_hasher_bcrypt::BcryptHasher;
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manager = PasswordHasherManager::builder()
         .with_hasher(Arc::new(Argon2Hasher::new()))
         .with_hasher(Arc::new(BcryptHasher::new()))
+        .default_algorithm(password_hasher::Algorithm::Argon2id)
         .build()?;
 
     // 2. Hash new password (uses Argon2id by default)
@@ -52,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let old_bcrypt_str = "$2b$12$e8Y7Yp3P9D/w/G5eH9T1eeG3Q1.2K8eG3Q1.2K8eG3Q1.2K8eG3Q1";
     if let Ok(old_hash) = PasswordHash::parse(old_bcrypt_str) {
         if manager.needs_rehash(&old_hash) {
-            println!("Old hash format detected. Re-hashing password with default Argon2id...");
+            println!("Old hash format detected. Re-hashing with default Argon2id...");
             let upgraded_hash = manager.hash_password(password)?;
             // Save upgraded_hash to database...
         }
@@ -65,11 +75,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Asynchronous Hashing (Tokio Background Thread Offloading)
 
 ```rust
-use password_hasher::{AsyncPasswordHasher, PasswordHasherManager};
+use password_hasher::{Algorithm, AsyncPasswordHasher, PasswordHasherManager};
+use password_hasher_argon2::Argon2Hasher;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let manager = PasswordHasherManager::default();
+    let manager = PasswordHasherManager::builder()
+        .with_hasher(Arc::new(Argon2Hasher::new()))
+        .default_algorithm(Algorithm::Argon2id)
+        .build()?;
 
     let password = "user_secret_password_123!".to_string();
 
