@@ -22,6 +22,9 @@ members = [
     "crates/secret-store",
     "crates/secret-store-memory",
     "crates/secret-store-postgres",
+    "crates/template-engine",
+    "crates/template-engine-askama",
+    "crates/template-engine-tera",
 ]
 
 [workspace.lints.clippy]
