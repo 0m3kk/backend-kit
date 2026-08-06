@@ -4,7 +4,7 @@ use std::fmt;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce as AesNonce};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce as ChaChaNonce};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::errors::SecretError;
 use crate::types::{CipherAlgorithm, EncryptedPayload};
@@ -95,14 +95,15 @@ impl KeyRing {
             .ok_or_else(|| SecretError::InvalidKey("Key ring is empty".to_string()))?;
 
         let mut nonce = vec![0u8; 12];
-        rand::thread_rng().fill(&mut nonce[..]);
+        rand::rng().fill(&mut nonce[..]);
 
-        let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&kek.key);
-        let cipher = Aes256Gcm::new(cipher_key);
-        let aes_nonce = AesNonce::from_slice(&nonce);
+        let cipher_key = aes_gcm::Key::<Aes256Gcm>::from(kek.key);
+        let cipher = Aes256Gcm::new(&cipher_key);
+        let aes_nonce = AesNonce::try_from(nonce.as_slice())
+            .map_err(|e| SecretError::EncryptionError(e.to_string()))?;
 
         let mut wrapped = cipher
-            .encrypt(aes_nonce, dek.as_ref())
+            .encrypt(&aes_nonce, dek.as_ref())
             .map_err(|e| SecretError::EncryptionError(format!("DEK wrap failed: {e}")))?;
 
         let mut blob = Vec::with_capacity(12 + wrapped.len());
@@ -127,12 +128,13 @@ impl KeyRing {
         }
 
         let (nonce, ciphertext) = wrapped.split_at(12);
-        let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&kek.key);
-        let cipher = Aes256Gcm::new(cipher_key);
-        let aes_nonce = AesNonce::from_slice(nonce);
+        let cipher_key = aes_gcm::Key::<Aes256Gcm>::from(kek.key);
+        let cipher = Aes256Gcm::new(&cipher_key);
+        let aes_nonce =
+            AesNonce::try_from(nonce).map_err(|e| SecretError::DecryptionError(e.to_string()))?;
 
         let dek_bytes = cipher
-            .decrypt(aes_nonce, ciphertext)
+            .decrypt(&aes_nonce, ciphertext)
             .map_err(|e| SecretError::DecryptionError(format!("DEK unwrap failed: {e}")))?;
 
         let dek: [u8; KEY_LEN] = dek_bytes
@@ -146,7 +148,7 @@ impl KeyRing {
 /// Generates a fresh 32-byte random Data Encryption Key (DEK).
 pub fn generate_dek() -> Result<[u8; KEY_LEN], SecretError> {
     let mut dek = [0u8; KEY_LEN];
-    rand::thread_rng().fill(&mut dek);
+    rand::rng().fill(&mut dek);
     Ok(dek)
 }
 
@@ -164,23 +166,25 @@ impl SecretCrypto {
         let (wrapped_dek, kek_version) = keyring.wrap_dek(&dek)?;
 
         let mut nonce = vec![0u8; 12];
-        rand::thread_rng().fill(&mut nonce[..]);
+        rand::rng().fill(&mut nonce[..]);
 
         let ciphertext = match cipher_algo {
             CipherAlgorithm::Aes256Gcm => {
-                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&dek);
-                let cipher = Aes256Gcm::new(cipher_key);
-                let aes_nonce = AesNonce::from_slice(&nonce);
+                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from(dek);
+                let cipher = Aes256Gcm::new(&cipher_key);
+                let aes_nonce = AesNonce::try_from(nonce.as_slice())
+                    .map_err(|e| SecretError::EncryptionError(e.to_string()))?;
                 cipher
-                    .encrypt(aes_nonce, plaintext)
+                    .encrypt(&aes_nonce, plaintext)
                     .map_err(|e| SecretError::EncryptionError(e.to_string()))?
             }
             CipherAlgorithm::ChaCha20Poly1305 => {
-                let cipher_key = chacha20poly1305::Key::from_slice(&dek);
-                let cipher = ChaCha20Poly1305::new(cipher_key);
-                let chacha_nonce = ChaChaNonce::from_slice(&nonce);
+                let cipher_key = chacha20poly1305::Key::from(dek);
+                let cipher = ChaCha20Poly1305::new(&cipher_key);
+                let chacha_nonce = ChaChaNonce::try_from(nonce.as_slice())
+                    .map_err(|e| SecretError::EncryptionError(e.to_string()))?;
                 cipher
-                    .encrypt(chacha_nonce, plaintext)
+                    .encrypt(&chacha_nonce, plaintext)
                     .map_err(|e| SecretError::EncryptionError(e.to_string()))?
             }
         };
@@ -211,21 +215,23 @@ impl SecretCrypto {
 
         match payload.cipher {
             CipherAlgorithm::Aes256Gcm => {
-                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&dek);
-                let cipher = Aes256Gcm::new(cipher_key);
-                let aes_nonce = AesNonce::from_slice(&payload.nonce);
+                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from(dek);
+                let cipher = Aes256Gcm::new(&cipher_key);
+                let aes_nonce = AesNonce::try_from(payload.nonce.as_slice())
+                    .map_err(|e| SecretError::DecryptionError(e.to_string()))?;
                 cipher
-                    .decrypt(aes_nonce, payload.ciphertext.as_ref())
+                    .decrypt(&aes_nonce, payload.ciphertext.as_ref())
                     .map_err(|e| {
                         SecretError::DecryptionError(format!("AES-GCM decryption failed: {e}"))
                     })
             }
             CipherAlgorithm::ChaCha20Poly1305 => {
-                let cipher_key = chacha20poly1305::Key::from_slice(&dek);
-                let cipher = ChaCha20Poly1305::new(cipher_key);
-                let chacha_nonce = ChaChaNonce::from_slice(&payload.nonce);
+                let cipher_key = chacha20poly1305::Key::from(dek);
+                let cipher = ChaCha20Poly1305::new(&cipher_key);
+                let chacha_nonce = ChaChaNonce::try_from(payload.nonce.as_slice())
+                    .map_err(|e| SecretError::DecryptionError(e.to_string()))?;
                 cipher
-                    .decrypt(chacha_nonce, payload.ciphertext.as_ref())
+                    .decrypt(&chacha_nonce, payload.ciphertext.as_ref())
                     .map_err(|e| {
                         SecretError::DecryptionError(format!(
                             "ChaCha20Poly1305 decryption failed: {e}"

@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use futures_util::stream;
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 use kv_store::{BatchOp, Key, KvEntry, KvError, KvStore, KvStream, ScanOptions, SetOptions, Value};
 
