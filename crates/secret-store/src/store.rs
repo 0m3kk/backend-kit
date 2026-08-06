@@ -6,7 +6,7 @@ use crate::types::{
 };
 
 /// Universal Secret Store specification trait providing async secret management,
-/// secret versioning, encrypted storage, tag filtering, master key rotation, and TTL expiration.
+/// secret versioning, envelope encryption (DEK + KeyRing KEK), tag filtering, master key rotation, and TTL expiration.
 #[async_trait]
 pub trait SecretStore: Send + Sync {
     /// Retrieve the latest active version of a secret by path.
@@ -35,9 +35,9 @@ pub trait SecretStore: Send + Sync {
     /// List secret headers matching prefix/tag filters without returning secret values.
     async fn list(&self, options: ListSecretOptions) -> Result<Vec<SecretHeader>, SecretError>;
 
-    /// Rotate master key: re-encrypt stored secrets encrypted with `old_key_id` using `new_key_id`.
-    /// Returns the number of secret versions re-encrypted.
-    async fn rotate_key(&self, old_key_id: &str, new_key_id: &str) -> Result<u64, SecretError>;
+    /// Re-wrap secret entries stored under older master key versions to the current master key version.
+    /// Returns the number of secret versions re-wrapped.
+    async fn rotate_key(&self) -> Result<u64, SecretError>;
 
     /// Purge up to `limit` expired secrets from the store. Returns the number of purged secret versions.
     async fn clean_expired(&self, limit: Option<usize>) -> Result<u64, SecretError>;

@@ -18,6 +18,12 @@ pub enum SecretError {
     #[error("Decryption error: {0}")]
     DecryptionError(String),
 
+    #[error("Invalid master key: {0}")]
+    InvalidKey(String),
+
+    #[error("Unknown master key version: {0}")]
+    UnknownKeyVersion(u32),
+
     #[error("Key provider error: {0}")]
     KeyProviderError(String),
 

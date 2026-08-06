@@ -1,25 +1,19 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use secret_store::{
-    CipherAlgorithm, KeyProvider, ListSecretOptions, SecretPath, SecretStore, SecretValue,
-    SetSecretOptions, StaticKeyProvider,
+    CipherAlgorithm, KEY_LEN, KeyRing, ListSecretOptions, MasterKey, SecretPath, SecretStore,
+    SecretValue, SetSecretOptions,
 };
 use secret_store_postgres::PostgresSecretStore;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-fn create_key_provider() -> Arc<dyn KeyProvider> {
-    let mut provider = StaticKeyProvider::new();
-    provider
-        .add_key("k1", vec![11u8; 32])
-        .expect("Failed to add key k1");
-    provider
-        .add_key("k2", vec![22u8; 32])
-        .expect("Failed to add key k2");
-    Arc::new(provider)
+fn create_keyring() -> KeyRing {
+    let k1 = MasterKey::new(1, [11u8; KEY_LEN]);
+    let k2 = MasterKey::new(2, [22u8; KEY_LEN]);
+    KeyRing::new([k1, k2]).expect("Failed to create KeyRing")
 }
 
 #[tokio::test]
@@ -28,16 +22,16 @@ async fn test_postgres_secret_store_lazy_connect() {
         .connect_lazy("postgres://postgres:postgres@localhost:5432/test_db")
         .expect("Lazy connect failed");
 
-    let provider = create_key_provider();
-    let store = PostgresSecretStore::new(pool, provider, "k1", CipherAlgorithm::Aes256Gcm);
+    let keyring = create_keyring();
+    let store = PostgresSecretStore::new(pool, keyring, CipherAlgorithm::Aes256Gcm);
     let path = SecretPath::new("test/lazy").unwrap();
     assert!(store.get(&path).await.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_postgres_secret_get_set_delete(pool: PgPool) {
-    let provider = create_key_provider();
-    let store = PostgresSecretStore::new(pool, provider, "k1", CipherAlgorithm::Aes256Gcm);
+    let keyring = create_keyring();
+    let store = PostgresSecretStore::new(pool, keyring, CipherAlgorithm::Aes256Gcm);
 
     let path = SecretPath::new("prod/db/app_password").unwrap();
     let value = SecretValue::from("super_secret_db_pass");
@@ -82,8 +76,10 @@ async fn test_postgres_secret_get_set_delete(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_postgres_secret_list_and_rotate(pool: PgPool) {
-    let provider = create_key_provider();
-    let store = PostgresSecretStore::new(pool, provider, "k1", CipherAlgorithm::Aes256Gcm);
+    let k1 = MasterKey::new(1, [11u8; KEY_LEN]);
+    let keyring1 = KeyRing::new([k1]).unwrap();
+
+    let store = PostgresSecretStore::new(pool, keyring1, CipherAlgorithm::Aes256Gcm);
 
     let path1 = SecretPath::new("prod/services/stripe").unwrap();
     let path2 = SecretPath::new("prod/services/aws").unwrap();
@@ -112,8 +108,11 @@ async fn test_postgres_secret_list_and_rotate(pool: PgPool) {
         .unwrap();
     assert_eq!(list_res.len(), 2);
 
-    // Rotate master key k1 -> k2
-    let count = store.rotate_key("k1", "k2").await.unwrap();
+    // Add version 2 master key and rotate
+    let k2 = MasterKey::new(2, [22u8; KEY_LEN]);
+    store.add_master_key(k2).await.unwrap();
+
+    let count = store.rotate_key().await.unwrap();
     assert_eq!(count, 2);
 
     let s1 = store.get(&path1).await.unwrap().unwrap();
@@ -122,8 +121,8 @@ async fn test_postgres_secret_list_and_rotate(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_postgres_secret_expiration(pool: PgPool) {
-    let provider = create_key_provider();
-    let store = PostgresSecretStore::new(pool, provider, "k1", CipherAlgorithm::Aes256Gcm);
+    let keyring = create_keyring();
+    let store = PostgresSecretStore::new(pool, keyring, CipherAlgorithm::Aes256Gcm);
 
     let path = SecretPath::new("temp/token").unwrap();
     store

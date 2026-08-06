@@ -1,15 +1,14 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use secret_store::{
-    CipherAlgorithm, ListSecretOptions, SecretError, SecretPath, SecretStore, SecretValue,
-    SetSecretOptions, StaticKeyProvider,
+    CipherAlgorithm, KEY_LEN, KeyRing, ListSecretOptions, MasterKey, SecretError, SecretPath,
+    SecretStore, SecretValue, SetSecretOptions,
 };
 use secret_store_memory::MemorySecretStore;
 
 #[tokio::test]
 async fn test_memory_secret_store_crud() -> Result<(), SecretError> {
-    let store = MemorySecretStore::with_master_key(vec![42u8; 32])?;
+    let store = MemorySecretStore::with_master_key([42u8; KEY_LEN])?;
     let path = SecretPath::new("app/database/password")?;
     let val = SecretValue::from("p@ssword123");
 
@@ -63,7 +62,7 @@ async fn test_memory_secret_store_crud() -> Result<(), SecretError> {
 
 #[tokio::test]
 async fn test_memory_secret_store_list_and_filter() -> Result<(), SecretError> {
-    let store = MemorySecretStore::with_master_key(vec![1u8; 32])?;
+    let store = MemorySecretStore::with_master_key([1u8; KEY_LEN])?;
 
     store
         .set(
@@ -102,14 +101,10 @@ async fn test_memory_secret_store_list_and_filter() -> Result<(), SecretError> {
 
 #[tokio::test]
 async fn test_memory_key_rotation() -> Result<(), SecretError> {
-    let key1 = vec![10u8; 32];
-    let key2 = vec![20u8; 32];
+    let k1 = MasterKey::new(1, [10u8; KEY_LEN]);
+    let keyring = KeyRing::new([k1])?;
 
-    let mut provider = StaticKeyProvider::new();
-    provider.add_key("k1", key1)?;
-    provider.add_key("k2", key2)?;
-
-    let store = MemorySecretStore::new(Arc::new(provider), "k1", CipherAlgorithm::Aes256Gcm);
+    let store = MemorySecretStore::new(keyring, CipherAlgorithm::Aes256Gcm);
 
     let path = SecretPath::new("security/master_token")?;
     store
@@ -120,8 +115,12 @@ async fn test_memory_key_rotation() -> Result<(), SecretError> {
         )
         .await?;
 
-    // Rotate key from k1 to k2
-    let re_encrypted_count = store.rotate_key("k1", "k2").await?;
+    // Add version 2 master key to KeyRing
+    let k2 = MasterKey::new(2, [20u8; KEY_LEN]);
+    store.add_master_key(k2).await?;
+
+    // Rotate keys: re-wraps DEKs under version 2
+    let re_encrypted_count = store.rotate_key().await?;
     assert_eq!(re_encrypted_count, 1);
 
     // Verify secret can still be retrieved and decrypted seamlessly
@@ -136,7 +135,7 @@ async fn test_memory_key_rotation() -> Result<(), SecretError> {
 
 #[tokio::test]
 async fn test_memory_expiration() -> Result<(), SecretError> {
-    let store = MemorySecretStore::with_master_key(vec![99u8; 32])?;
+    let store = MemorySecretStore::with_master_key([99u8; KEY_LEN])?;
     let path = SecretPath::new("temp/session_key")?;
 
     store

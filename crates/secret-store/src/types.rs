@@ -171,11 +171,12 @@ pub enum CipherAlgorithm {
     ChaCha20Poly1305,
 }
 
-/// Ciphertext payload containing encryption metadata, nonce, and tag.
+/// Ciphertext payload containing envelope metadata, wrapped DEK, nonce, and ciphertext.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncryptedPayload {
     pub cipher: CipherAlgorithm,
-    pub key_id: String,
+    pub kek_version: u32,
+    pub wrapped_dek: Vec<u8>,
     pub nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,
     pub tag: Option<Vec<u8>>,

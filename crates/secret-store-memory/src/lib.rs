@@ -6,9 +6,9 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use secret_store::{
-    CipherAlgorithm, EncryptedPayload, KeyProvider, ListSecretOptions, SecretCrypto, SecretEntry,
-    SecretError, SecretHeader, SecretPath, SecretStore, SecretValue, SetSecretOptions,
-    StaticKeyProvider,
+    CipherAlgorithm, EncryptedPayload, KEY_LEN, KeyRing, ListSecretOptions, MasterKey,
+    SecretCrypto, SecretEntry, SecretError, SecretHeader, SecretPath, SecretStore, SecretValue,
+    SetSecretOptions,
 };
 
 #[derive(Debug, Clone)]
@@ -29,39 +29,45 @@ struct StoredSecretRecord {
     versions: HashMap<u64, StoredVersion>,
 }
 
-/// In-memory concurrent implementation of `SecretStore`.
+/// In-memory concurrent implementation of `SecretStore` with Envelope Encryption and `KeyRing` management.
 #[derive(Clone)]
 pub struct MemorySecretStore {
-    key_provider: Arc<dyn KeyProvider>,
-    active_key_id: String,
+    keyring: Arc<RwLock<KeyRing>>,
     default_cipher: CipherAlgorithm,
     records: Arc<RwLock<HashMap<String, StoredSecretRecord>>>,
 }
 
 impl MemorySecretStore {
-    /// Create a new `MemorySecretStore` with a custom `KeyProvider` and active key ID.
-    pub fn new(
-        key_provider: Arc<dyn KeyProvider>,
-        active_key_id: impl Into<String>,
-        default_cipher: CipherAlgorithm,
-    ) -> Self {
+    /// Create a new `MemorySecretStore` with a provided `KeyRing`.
+    pub fn new(keyring: KeyRing, default_cipher: CipherAlgorithm) -> Self {
         Self {
-            key_provider,
-            active_key_id: active_key_id.into(),
+            keyring: Arc::new(RwLock::new(keyring)),
             default_cipher,
             records: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Helper to construct a simple in-memory secret store using a single 32-byte master key.
-    pub fn with_master_key(master_key: Vec<u8>) -> Result<Self, SecretError> {
-        let key_id = "master-key-0";
-        let provider = StaticKeyProvider::new().with_key(key_id, master_key)?;
-        Ok(Self::new(
-            Arc::new(provider),
-            key_id,
-            CipherAlgorithm::Aes256Gcm,
-        ))
+    /// Helper to construct a `MemorySecretStore` with a single 32-byte master key (KEK version 1).
+    pub fn with_master_key(master_key_bytes: [u8; KEY_LEN]) -> Result<Self, SecretError> {
+        let master_key = MasterKey::new(1, master_key_bytes);
+        let keyring = KeyRing::new([master_key])?;
+        Ok(Self::new(keyring, CipherAlgorithm::Aes256Gcm))
+    }
+
+    /// Add a new `MasterKey` version to the store's `KeyRing`.
+    pub async fn add_master_key(&self, key: MasterKey) -> Result<(), SecretError> {
+        let mut kr_guard = self.keyring.write().await;
+        let mut keys: Vec<MasterKey> = Vec::new();
+        // Extract current keys and add new key
+        let current_ver = kr_guard.current_version();
+        for v in 1..=current_ver.max(key.version()) {
+            if let Ok(k) = kr_guard.get_key(v) {
+                keys.push(k.clone());
+            }
+        }
+        keys.push(key);
+        *kr_guard = KeyRing::new(keys)?;
+        Ok(())
     }
 }
 
@@ -84,8 +90,8 @@ impl SecretStore for MemorySecretStore {
             return Ok(None);
         }
 
-        let master_key = self.key_provider.get_key(&ver.payload.key_id)?;
-        let decrypted_bytes = SecretCrypto::decrypt(&ver.payload, &master_key)?;
+        let keyring_guard = self.keyring.read().await;
+        let decrypted_bytes = SecretCrypto::decrypt_envelope(&ver.payload, &keyring_guard)?;
 
         Ok(Some(SecretEntry {
             path: path.clone(),
@@ -118,8 +124,8 @@ impl SecretStore for MemorySecretStore {
             return Ok(None);
         }
 
-        let master_key = self.key_provider.get_key(&ver.payload.key_id)?;
-        let decrypted_bytes = SecretCrypto::decrypt(&ver.payload, &master_key)?;
+        let keyring_guard = self.keyring.read().await;
+        let decrypted_bytes = SecretCrypto::decrypt_envelope(&ver.payload, &keyring_guard)?;
 
         Ok(Some(SecretEntry {
             path: path.clone(),
@@ -137,13 +143,9 @@ impl SecretStore for MemorySecretStore {
         value: SecretValue,
         options: SetSecretOptions,
     ) -> Result<SecretEntry, SecretError> {
-        let master_key = self.key_provider.get_key(&self.active_key_id)?;
-        let payload = SecretCrypto::encrypt(
-            self.default_cipher,
-            &self.active_key_id,
-            &master_key,
-            value.as_bytes(),
-        )?;
+        let keyring_guard = self.keyring.read().await;
+        let payload =
+            SecretCrypto::encrypt_envelope(self.default_cipher, &keyring_guard, value.as_bytes())?;
 
         let now = SystemTime::now();
         let expires_at = options.ttl.map(|d| now + d);
@@ -251,24 +253,21 @@ impl SecretStore for MemorySecretStore {
         Ok(headers)
     }
 
-    async fn rotate_key(&self, old_key_id: &str, new_key_id: &str) -> Result<u64, SecretError> {
-        let old_master_key = self.key_provider.get_key(old_key_id)?;
-        let new_master_key = self.key_provider.get_key(new_key_id)?;
+    async fn rotate_key(&self) -> Result<u64, SecretError> {
+        let keyring_guard = self.keyring.read().await;
+        let target_kek_version = keyring_guard.current_version();
 
         let mut guard = self.records.write().await;
         let mut count = 0u64;
 
         for record in guard.values_mut() {
             for ver in record.versions.values_mut() {
-                if ver.payload.key_id == old_key_id {
-                    let decrypted = SecretCrypto::decrypt(&ver.payload, &old_master_key)?;
-                    let re_encrypted = SecretCrypto::encrypt(
-                        ver.payload.cipher,
-                        new_key_id,
-                        &new_master_key,
-                        &decrypted,
-                    )?;
-                    ver.payload = re_encrypted;
+                if ver.payload.kek_version != target_kek_version {
+                    let dek = keyring_guard
+                        .unwrap_dek(ver.payload.kek_version, &ver.payload.wrapped_dek)?;
+                    let (new_wrapped_dek, new_version) = keyring_guard.wrap_dek(&dek)?;
+                    ver.payload.wrapped_dek = new_wrapped_dek;
+                    ver.payload.kek_version = new_version;
                     count += 1;
                 }
             }

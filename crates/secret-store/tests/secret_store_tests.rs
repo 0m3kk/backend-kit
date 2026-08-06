@@ -1,6 +1,6 @@
 use secret_store::{
-    CipherAlgorithm, KeyProvider, SecretCrypto, SecretError, SecretPath, SecretValue,
-    StaticKeyProvider,
+    CipherAlgorithm, KEY_LEN, KeyRing, MasterKey, SecretCrypto, SecretError, SecretPath,
+    SecretValue, generate_dek,
 };
 
 #[test]
@@ -40,42 +40,60 @@ fn test_secret_value_redaction_and_json() -> Result<(), SecretError> {
 }
 
 #[test]
-fn test_crypto_aes_gcm() -> Result<(), SecretError> {
-    let key = vec![0u8; 32];
-    let provider = StaticKeyProvider::new().with_key("master-1", key.clone())?;
-    let key_bytes = provider.get_key("master-1")?;
+fn test_master_key_debug_redacted() {
+    let mk = MasterKey::new(1, [0xab; KEY_LEN]);
+    let debug_str = format!("{mk:?}");
+    assert!(debug_str.contains("redacted"));
+    assert!(!debug_str.contains("ab"));
+}
 
-    let plaintext = b"hello secret world";
-    let encrypted = SecretCrypto::encrypt(
-        CipherAlgorithm::Aes256Gcm,
-        "master-1",
-        &key_bytes,
-        plaintext,
-    )?;
+#[test]
+fn test_key_ring_validation_and_unwrapping() -> Result<(), SecretError> {
+    assert!(KeyRing::new([]).is_err());
+
+    let mk1 = MasterKey::new(1, [1u8; KEY_LEN]);
+    let mk1_dup = MasterKey::new(1, [2u8; KEY_LEN]);
+    assert!(KeyRing::new([mk1.clone(), mk1_dup]).is_err());
+
+    let mk2 = MasterKey::new(2, [2u8; KEY_LEN]);
+    let keyring = KeyRing::new([mk1, mk2])?;
+    assert_eq!(keyring.current_version(), 2);
+
+    let dek = generate_dek()?;
+    let (wrapped, ver) = keyring.wrap_dek(&dek)?;
+    assert_eq!(ver, 2);
+
+    let unwrapped = keyring.unwrap_dek(2, &wrapped)?;
+    assert_eq!(dek, unwrapped);
+    Ok(())
+}
+
+#[test]
+fn test_envelope_crypto_aes_gcm() -> Result<(), SecretError> {
+    let keyring = KeyRing::new([MasterKey::new(1, [42u8; KEY_LEN])])?;
+    let plaintext = b"envelope secret message";
+
+    let encrypted =
+        SecretCrypto::encrypt_envelope(CipherAlgorithm::Aes256Gcm, &keyring, plaintext)?;
     assert_eq!(encrypted.cipher, CipherAlgorithm::Aes256Gcm);
-    assert_eq!(encrypted.key_id, "master-1");
+    assert_eq!(encrypted.kek_version, 1);
 
-    let decrypted = SecretCrypto::decrypt(&encrypted, &key_bytes)?;
+    let decrypted = SecretCrypto::decrypt_envelope(&encrypted, &keyring)?;
     assert_eq!(decrypted, plaintext);
     Ok(())
 }
 
 #[test]
-fn test_crypto_chacha20_poly1305() -> Result<(), SecretError> {
-    let key = vec![7u8; 32];
-    let provider = StaticKeyProvider::new().with_key("master-chacha", key.clone())?;
-    let key_bytes = provider.get_key("master-chacha")?;
+fn test_envelope_crypto_chacha20_poly1305() -> Result<(), SecretError> {
+    let keyring = KeyRing::new([MasterKey::new(5, [77u8; KEY_LEN])])?;
+    let plaintext = b"chacha envelope secret payload";
 
-    let plaintext = b"chacha secret payload";
-    let encrypted = SecretCrypto::encrypt(
-        CipherAlgorithm::ChaCha20Poly1305,
-        "master-chacha",
-        &key_bytes,
-        plaintext,
-    )?;
+    let encrypted =
+        SecretCrypto::encrypt_envelope(CipherAlgorithm::ChaCha20Poly1305, &keyring, plaintext)?;
     assert_eq!(encrypted.cipher, CipherAlgorithm::ChaCha20Poly1305);
+    assert_eq!(encrypted.kek_version, 5);
 
-    let decrypted = SecretCrypto::decrypt(&encrypted, &key_bytes)?;
+    let decrypted = SecretCrypto::decrypt_envelope(&encrypted, &keyring)?;
     assert_eq!(decrypted, plaintext);
     Ok(())
 }

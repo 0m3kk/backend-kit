@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::fmt;
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce as AesNonce};
@@ -9,141 +9,198 @@ use rand::Rng;
 use crate::errors::SecretError;
 use crate::types::{CipherAlgorithm, EncryptedPayload};
 
-/// Interface for retrieving encryption keys by key identifier.
-pub trait KeyProvider: Send + Sync {
-    /// Retrieve the 32-byte master key corresponding to the `key_id`.
-    fn get_key(&self, key_id: &str) -> Result<Vec<u8>, SecretError>;
+/// Length in bytes of master keys (KEKs) and data encryption keys (DEKs).
+pub const KEY_LEN: usize = 32;
+
+/// A versioned master key (KEK) used to wrap DEKs in envelope encryption.
+#[derive(Clone)]
+pub struct MasterKey {
+    version: u32,
+    key: [u8; KEY_LEN],
 }
 
-/// Static in-memory `KeyProvider` holding master key mappings.
-#[derive(Debug, Clone, Default)]
-pub struct StaticKeyProvider {
-    keys: HashMap<String, Vec<u8>>,
-}
-
-impl StaticKeyProvider {
-    pub fn new() -> Self {
-        Self {
-            keys: HashMap::new(),
-        }
+impl MasterKey {
+    /// Creates a new `MasterKey` for the given version and 32-byte key material.
+    pub fn new(version: u32, key: [u8; KEY_LEN]) -> Self {
+        Self { version, key }
     }
 
-    pub fn with_key(
-        mut self,
-        key_id: impl Into<String>,
-        key_bytes: impl Into<Vec<u8>>,
-    ) -> Result<Self, SecretError> {
-        let bytes = key_bytes.into();
-        if bytes.len() != 32 {
-            return Err(SecretError::KeyProviderError(format!(
-                "Master key must be exactly 32 bytes, got {}",
-                bytes.len()
-            )));
-        }
-        self.keys.insert(key_id.into(), bytes);
-        Ok(self)
+    pub fn version(&self) -> u32 {
+        self.version
     }
 
-    pub fn add_key(
-        &mut self,
-        key_id: impl Into<String>,
-        key_bytes: impl Into<Vec<u8>>,
-    ) -> Result<(), SecretError> {
-        let bytes = key_bytes.into();
-        if bytes.len() != 32 {
-            return Err(SecretError::KeyProviderError(format!(
-                "Master key must be exactly 32 bytes, got {}",
-                bytes.len()
-            )));
-        }
-        self.keys.insert(key_id.into(), bytes);
-        Ok(())
+    pub fn key(&self) -> &[u8; KEY_LEN] {
+        &self.key
     }
 }
 
-impl KeyProvider for StaticKeyProvider {
-    fn get_key(&self, key_id: &str) -> Result<Vec<u8>, SecretError> {
+impl fmt::Debug for MasterKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MasterKey")
+            .field("version", &self.version)
+            .field("key", &"[redacted]")
+            .finish()
+    }
+}
+
+/// A set of versioned master keys (KEKs) for envelope encryption.
+///
+/// The highest version is automatically selected as the active key for wrapping DEKs on writes.
+/// Older versions remain available for unwrapping existing DEKs during reads and rotation.
+#[derive(Debug, Clone)]
+pub struct KeyRing {
+    keys: BTreeMap<u32, MasterKey>,
+    current_version: u32,
+}
+
+impl KeyRing {
+    /// Builds a `KeyRing` from one or more master keys. The highest version becomes the current key.
+    pub fn new(keys: impl IntoIterator<Item = MasterKey>) -> Result<Self, SecretError> {
+        let mut ring = BTreeMap::new();
+        for key in keys {
+            let version = key.version();
+            if ring.insert(version, key).is_some() {
+                return Err(SecretError::InvalidKey(format!(
+                    "Duplicate master key version {version}"
+                )));
+            }
+        }
+        let current_version = ring.keys().next_back().copied().ok_or_else(|| {
+            SecretError::InvalidKey("Key ring must contain at least one master key".to_string())
+        })?;
+
+        Ok(Self {
+            keys: ring,
+            current_version,
+        })
+    }
+
+    /// Retrieve the current master key version used for writes.
+    pub fn current_version(&self) -> u32 {
+        self.current_version
+    }
+
+    /// Retrieve a reference to a `MasterKey` by version.
+    pub fn get_key(&self, version: u32) -> Result<&MasterKey, SecretError> {
         self.keys
-            .get(key_id)
-            .cloned()
-            .ok_or_else(|| SecretError::KeyProviderError(format!("Key ID '{key_id}' not found")))
+            .get(&version)
+            .ok_or(SecretError::UnknownKeyVersion(version))
     }
-}
 
-impl KeyProvider for Arc<dyn KeyProvider> {
-    fn get_key(&self, key_id: &str) -> Result<Vec<u8>, SecretError> {
-        self.as_ref().get_key(key_id)
-    }
-}
+    /// Wrap (encrypt) a 32-byte DEK under the current master key.
+    pub fn wrap_dek(&self, dek: &[u8; KEY_LEN]) -> Result<(Vec<u8>, u32), SecretError> {
+        let kek = self
+            .keys
+            .get(&self.current_version)
+            .ok_or_else(|| SecretError::InvalidKey("Key ring is empty".to_string()))?;
 
-/// Cryptographic helper for encrypting and decrypting secret values using AEAD algorithms.
-pub struct SecretCrypto;
-
-impl SecretCrypto {
-    /// Encrypt plaintext using the specified algorithm and 32-byte key.
-    pub fn encrypt(
-        cipher_algo: CipherAlgorithm,
-        key_id: impl Into<String>,
-        key_bytes: &[u8],
-        plaintext: &[u8],
-    ) -> Result<EncryptedPayload, SecretError> {
-        if key_bytes.len() != 32 {
-            return Err(SecretError::EncryptionError(format!(
-                "Key length must be 32 bytes, got {}",
-                key_bytes.len()
-            )));
-        }
-
-        let key_id = key_id.into();
         let mut nonce = vec![0u8; 12];
         rand::thread_rng().fill(&mut nonce[..]);
 
-        match cipher_algo {
-            CipherAlgorithm::Aes256Gcm => {
-                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(key_bytes);
-                let cipher = Aes256Gcm::new(cipher_key);
-                let aes_nonce = AesNonce::from_slice(&nonce);
+        let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&kek.key);
+        let cipher = Aes256Gcm::new(cipher_key);
+        let aes_nonce = AesNonce::from_slice(&nonce);
 
-                let ciphertext = cipher
-                    .encrypt(aes_nonce, plaintext)
-                    .map_err(|e| SecretError::EncryptionError(e.to_string()))?;
+        let mut wrapped = cipher
+            .encrypt(aes_nonce, dek.as_ref())
+            .map_err(|e| SecretError::EncryptionError(format!("DEK wrap failed: {e}")))?;
 
-                Ok(EncryptedPayload {
-                    cipher: CipherAlgorithm::Aes256Gcm,
-                    key_id,
-                    nonce,
-                    ciphertext,
-                    tag: None,
-                })
-            }
-            CipherAlgorithm::ChaCha20Poly1305 => {
-                let cipher_key = chacha20poly1305::Key::from_slice(key_bytes);
-                let cipher = ChaCha20Poly1305::new(cipher_key);
-                let chacha_nonce = ChaChaNonce::from_slice(&nonce);
+        let mut blob = Vec::with_capacity(12 + wrapped.len());
+        blob.extend_from_slice(&nonce);
+        blob.append(&mut wrapped);
 
-                let ciphertext = cipher
-                    .encrypt(chacha_nonce, plaintext)
-                    .map_err(|e| SecretError::EncryptionError(e.to_string()))?;
-
-                Ok(EncryptedPayload {
-                    cipher: CipherAlgorithm::ChaCha20Poly1305,
-                    key_id,
-                    nonce,
-                    ciphertext,
-                    tag: None,
-                })
-            }
-        }
+        Ok((blob, self.current_version))
     }
 
-    /// Decrypt payload using 32-byte key.
-    pub fn decrypt(payload: &EncryptedPayload, key_bytes: &[u8]) -> Result<Vec<u8>, SecretError> {
-        if key_bytes.len() != 32 {
-            return Err(SecretError::DecryptionError(format!(
-                "Key length must be 32 bytes, got {}",
-                key_bytes.len()
-            )));
+    /// Unwrap (decrypt) a DEK previously wrapped under `kek_version`.
+    pub fn unwrap_dek(
+        &self,
+        kek_version: u32,
+        wrapped: &[u8],
+    ) -> Result<[u8; KEY_LEN], SecretError> {
+        let kek = self.get_key(kek_version)?;
+
+        if wrapped.len() < 12 {
+            return Err(SecretError::DecryptionError(
+                "Truncated wrapped DEK blob".to_string(),
+            ));
         }
+
+        let (nonce, ciphertext) = wrapped.split_at(12);
+        let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&kek.key);
+        let cipher = Aes256Gcm::new(cipher_key);
+        let aes_nonce = AesNonce::from_slice(nonce);
+
+        let dek_bytes = cipher
+            .decrypt(aes_nonce, ciphertext)
+            .map_err(|e| SecretError::DecryptionError(format!("DEK unwrap failed: {e}")))?;
+
+        let dek: [u8; KEY_LEN] = dek_bytes
+            .try_into()
+            .map_err(|_| SecretError::DecryptionError("Invalid DEK length".to_string()))?;
+
+        Ok(dek)
+    }
+}
+
+/// Generates a fresh 32-byte random Data Encryption Key (DEK).
+pub fn generate_dek() -> Result<[u8; KEY_LEN], SecretError> {
+    let mut dek = [0u8; KEY_LEN];
+    rand::thread_rng().fill(&mut dek);
+    Ok(dek)
+}
+
+/// Cryptographic helper performing envelope encryption and decryption of secrets.
+pub struct SecretCrypto;
+
+impl SecretCrypto {
+    /// Encrypt plaintext secret payload using envelope encryption (DEK + KeyRing KEK).
+    pub fn encrypt_envelope(
+        cipher_algo: CipherAlgorithm,
+        keyring: &KeyRing,
+        plaintext: &[u8],
+    ) -> Result<EncryptedPayload, SecretError> {
+        let dek = generate_dek()?;
+        let (wrapped_dek, kek_version) = keyring.wrap_dek(&dek)?;
+
+        let mut nonce = vec![0u8; 12];
+        rand::thread_rng().fill(&mut nonce[..]);
+
+        let ciphertext = match cipher_algo {
+            CipherAlgorithm::Aes256Gcm => {
+                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&dek);
+                let cipher = Aes256Gcm::new(cipher_key);
+                let aes_nonce = AesNonce::from_slice(&nonce);
+                cipher
+                    .encrypt(aes_nonce, plaintext)
+                    .map_err(|e| SecretError::EncryptionError(e.to_string()))?
+            }
+            CipherAlgorithm::ChaCha20Poly1305 => {
+                let cipher_key = chacha20poly1305::Key::from_slice(&dek);
+                let cipher = ChaCha20Poly1305::new(cipher_key);
+                let chacha_nonce = ChaChaNonce::from_slice(&nonce);
+                cipher
+                    .encrypt(chacha_nonce, plaintext)
+                    .map_err(|e| SecretError::EncryptionError(e.to_string()))?
+            }
+        };
+
+        Ok(EncryptedPayload {
+            cipher: cipher_algo,
+            kek_version,
+            wrapped_dek,
+            nonce,
+            ciphertext,
+            tag: None,
+        })
+    }
+
+    /// Decrypt secret payload by unwrapping DEK from `KeyRing` and decrypting ciphertext.
+    pub fn decrypt_envelope(
+        payload: &EncryptedPayload,
+        keyring: &KeyRing,
+    ) -> Result<Vec<u8>, SecretError> {
+        let dek = keyring.unwrap_dek(payload.kek_version, &payload.wrapped_dek)?;
 
         if payload.nonce.len() != 12 {
             return Err(SecretError::DecryptionError(format!(
@@ -154,10 +211,9 @@ impl SecretCrypto {
 
         match payload.cipher {
             CipherAlgorithm::Aes256Gcm => {
-                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(key_bytes);
+                let cipher_key = aes_gcm::Key::<Aes256Gcm>::from_slice(&dek);
                 let cipher = Aes256Gcm::new(cipher_key);
                 let aes_nonce = AesNonce::from_slice(&payload.nonce);
-
                 cipher
                     .decrypt(aes_nonce, payload.ciphertext.as_ref())
                     .map_err(|e| {
@@ -165,10 +221,9 @@ impl SecretCrypto {
                     })
             }
             CipherAlgorithm::ChaCha20Poly1305 => {
-                let cipher_key = chacha20poly1305::Key::from_slice(key_bytes);
+                let cipher_key = chacha20poly1305::Key::from_slice(&dek);
                 let cipher = ChaCha20Poly1305::new(cipher_key);
                 let chacha_nonce = ChaChaNonce::from_slice(&payload.nonce);
-
                 cipher
                     .decrypt(chacha_nonce, payload.ciphertext.as_ref())
                     .map_err(|e| {

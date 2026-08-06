@@ -4,33 +4,27 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sqlx::types::time::OffsetDateTime;
 use sqlx::{PgPool, Row};
+use tokio::sync::RwLock;
 
 use secret_store::{
-    CipherAlgorithm, EncryptedPayload, KeyProvider, ListSecretOptions, SecretCrypto, SecretEntry,
-    SecretError, SecretHeader, SecretPath, SecretStore, SecretValue, SetSecretOptions,
+    CipherAlgorithm, EncryptedPayload, KeyRing, ListSecretOptions, MasterKey, SecretCrypto,
+    SecretEntry, SecretError, SecretHeader, SecretPath, SecretStore, SecretValue, SetSecretOptions,
 };
 
-/// PostgreSQL-backed implementation of `SecretStore`.
+/// PostgreSQL-backed implementation of `SecretStore` with Envelope Encryption and `KeyRing` rotation.
 #[derive(Clone)]
 pub struct PostgresSecretStore {
     pool: PgPool,
-    key_provider: Arc<dyn KeyProvider>,
-    active_key_id: String,
+    keyring: Arc<RwLock<KeyRing>>,
     default_cipher: CipherAlgorithm,
 }
 
 impl PostgresSecretStore {
     /// Create a new `PostgresSecretStore`.
-    pub fn new(
-        pool: PgPool,
-        key_provider: Arc<dyn KeyProvider>,
-        active_key_id: impl Into<String>,
-        default_cipher: CipherAlgorithm,
-    ) -> Self {
+    pub fn new(pool: PgPool, keyring: KeyRing, default_cipher: CipherAlgorithm) -> Self {
         Self {
             pool,
-            key_provider,
-            active_key_id: active_key_id.into(),
+            keyring: Arc::new(RwLock::new(keyring)),
             default_cipher,
         }
     }
@@ -42,13 +36,28 @@ impl PostgresSecretStore {
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))
     }
+
+    /// Add a new `MasterKey` version to the store's `KeyRing`.
+    pub async fn add_master_key(&self, key: MasterKey) -> Result<(), SecretError> {
+        let mut kr_guard = self.keyring.write().await;
+        let mut keys: Vec<MasterKey> = Vec::new();
+        let current_ver = kr_guard.current_version();
+        for v in 1..=current_ver.max(key.version()) {
+            if let Ok(k) = kr_guard.get_key(v) {
+                keys.push(k.clone());
+            }
+        }
+        keys.push(key);
+        *kr_guard = KeyRing::new(keys)?;
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl SecretStore for PostgresSecretStore {
     async fn get(&self, path: &SecretPath) -> Result<Option<SecretEntry>, SecretError> {
         let row = sqlx::query(
-            "SELECT h.active_version, h.tags, v.cipher, v.key_id, v.nonce, v.ciphertext, v.tag, v.created_at, v.expires_at \
+            "SELECT h.active_version, h.tags, v.cipher, v.kek_version, v.wrapped_dek, v.nonce, v.ciphertext, v.tag, v.created_at, v.expires_at \
              FROM secret_headers h \
              JOIN secret_versions v ON h.path = v.path AND h.active_version = v.version \
              WHERE h.path = $1 AND h.is_deleted = FALSE AND (v.expires_at IS NULL OR v.expires_at > NOW())"
@@ -79,7 +88,8 @@ impl SecretStore for PostgresSecretStore {
             }
         };
 
-        let key_id: String = row.get("key_id");
+        let kek_version_i32: i32 = row.get("kek_version");
+        let wrapped_dek: Vec<u8> = row.get("wrapped_dek");
         let nonce: Vec<u8> = row.get("nonce");
         let ciphertext: Vec<u8> = row.get("ciphertext");
         let tag: Option<Vec<u8>> = row.get("tag");
@@ -88,14 +98,15 @@ impl SecretStore for PostgresSecretStore {
 
         let payload = EncryptedPayload {
             cipher,
-            key_id: key_id.clone(),
+            kek_version: kek_version_i32 as u32,
+            wrapped_dek,
             nonce,
             ciphertext,
             tag,
         };
 
-        let master_key = self.key_provider.get_key(&key_id)?;
-        let decrypted_bytes = SecretCrypto::decrypt(&payload, &master_key)?;
+        let keyring_guard = self.keyring.read().await;
+        let decrypted_bytes = SecretCrypto::decrypt_envelope(&payload, &keyring_guard)?;
 
         Ok(Some(SecretEntry {
             path: path.clone(),
@@ -113,7 +124,7 @@ impl SecretStore for PostgresSecretStore {
         version: u64,
     ) -> Result<Option<SecretEntry>, SecretError> {
         let row = sqlx::query(
-            "SELECT h.tags, v.cipher, v.key_id, v.nonce, v.ciphertext, v.tag, v.created_at, v.expires_at \
+            "SELECT h.tags, v.cipher, v.kek_version, v.wrapped_dek, v.nonce, v.ciphertext, v.tag, v.created_at, v.expires_at \
              FROM secret_headers h \
              JOIN secret_versions v ON h.path = v.path AND v.version = $2 \
              WHERE h.path = $1 AND (v.expires_at IS NULL OR v.expires_at > NOW())"
@@ -144,7 +155,8 @@ impl SecretStore for PostgresSecretStore {
             }
         };
 
-        let key_id: String = row.get("key_id");
+        let kek_version_i32: i32 = row.get("kek_version");
+        let wrapped_dek: Vec<u8> = row.get("wrapped_dek");
         let nonce: Vec<u8> = row.get("nonce");
         let ciphertext: Vec<u8> = row.get("ciphertext");
         let tag: Option<Vec<u8>> = row.get("tag");
@@ -153,14 +165,15 @@ impl SecretStore for PostgresSecretStore {
 
         let payload = EncryptedPayload {
             cipher,
-            key_id: key_id.clone(),
+            kek_version: kek_version_i32 as u32,
+            wrapped_dek,
             nonce,
             ciphertext,
             tag,
         };
 
-        let master_key = self.key_provider.get_key(&key_id)?;
-        let decrypted_bytes = SecretCrypto::decrypt(&payload, &master_key)?;
+        let keyring_guard = self.keyring.read().await;
+        let decrypted_bytes = SecretCrypto::decrypt_envelope(&payload, &keyring_guard)?;
 
         Ok(Some(SecretEntry {
             path: path.clone(),
@@ -178,13 +191,9 @@ impl SecretStore for PostgresSecretStore {
         value: SecretValue,
         options: SetSecretOptions,
     ) -> Result<SecretEntry, SecretError> {
-        let master_key = self.key_provider.get_key(&self.active_key_id)?;
-        let payload = SecretCrypto::encrypt(
-            self.default_cipher,
-            &self.active_key_id,
-            &master_key,
-            value.as_bytes(),
-        )?;
+        let keyring_guard = self.keyring.read().await;
+        let payload =
+            SecretCrypto::encrypt_envelope(self.default_cipher, &keyring_guard, value.as_bytes())?;
 
         let tags_json = serde_json::to_value(&options.tags)
             .map_err(|e| SecretError::SerializationError(e.to_string()))?;
@@ -226,14 +235,15 @@ impl SecretStore for PostgresSecretStore {
         };
 
         let ver_row = sqlx::query(
-            "INSERT INTO secret_versions (path, version, cipher, key_id, nonce, ciphertext, tag, created_at, expires_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), CASE WHEN $8::FLOAT IS NOT NULL THEN NOW() + ($8 || ' seconds')::INTERVAL ELSE NULL END) \
+            "INSERT INTO secret_versions (path, version, cipher, kek_version, wrapped_dek, nonce, ciphertext, tag, created_at, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), CASE WHEN $9::FLOAT IS NOT NULL THEN NOW() + ($9 || ' seconds')::INTERVAL ELSE NULL END) \
              RETURNING created_at, expires_at"
         )
         .bind(path.as_str())
         .bind(version_i64)
         .bind(cipher_str)
-        .bind(&payload.key_id)
+        .bind(payload.kek_version as i32)
+        .bind(&payload.wrapped_dek)
         .bind(&payload.nonce)
         .bind(&payload.ciphertext)
         .bind(&payload.tag)
@@ -335,14 +345,14 @@ impl SecretStore for PostgresSecretStore {
         Ok(headers)
     }
 
-    async fn rotate_key(&self, old_key_id: &str, new_key_id: &str) -> Result<u64, SecretError> {
-        let old_master_key = self.key_provider.get_key(old_key_id)?;
-        let new_master_key = self.key_provider.get_key(new_key_id)?;
+    async fn rotate_key(&self) -> Result<u64, SecretError> {
+        let keyring_guard = self.keyring.read().await;
+        let target_kek_version = keyring_guard.current_version();
 
         let rows = sqlx::query(
-            "SELECT path, version, cipher, nonce, ciphertext, tag FROM secret_versions WHERE key_id = $1"
+            "SELECT path, version, kek_version, wrapped_dek FROM secret_versions WHERE kek_version != $1"
         )
-        .bind(old_key_id)
+        .bind(target_kek_version as i32)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
@@ -358,36 +368,17 @@ impl SecretStore for PostgresSecretStore {
         for row in rows {
             let path_str: String = row.get("path");
             let version: i64 = row.get("version");
-            let cipher_str: String = row.get("cipher");
-            let nonce: Vec<u8> = row.get("nonce");
-            let ciphertext: Vec<u8> = row.get("ciphertext");
-            let tag: Option<Vec<u8>> = row.get("tag");
+            let row_kek_version: i32 = row.get("kek_version");
+            let wrapped_dek: Vec<u8> = row.get("wrapped_dek");
 
-            let cipher = match cipher_str.as_str() {
-                "Aes256Gcm" => CipherAlgorithm::Aes256Gcm,
-                "ChaCha20Poly1305" => CipherAlgorithm::ChaCha20Poly1305,
-                other => return Err(SecretError::StoreError(format!("Unknown cipher: {other}"))),
-            };
-
-            let payload = EncryptedPayload {
-                cipher,
-                key_id: old_key_id.to_string(),
-                nonce,
-                ciphertext,
-                tag,
-            };
-
-            let decrypted = SecretCrypto::decrypt(&payload, &old_master_key)?;
-            let re_encrypted =
-                SecretCrypto::encrypt(cipher, new_key_id, &new_master_key, &decrypted)?;
+            let dek = keyring_guard.unwrap_dek(row_kek_version as u32, &wrapped_dek)?;
+            let (new_wrapped_dek, new_version) = keyring_guard.wrap_dek(&dek)?;
 
             sqlx::query(
-                "UPDATE secret_versions SET key_id = $1, nonce = $2, ciphertext = $3, tag = $4 WHERE path = $5 AND version = $6"
+                "UPDATE secret_versions SET kek_version = $1, wrapped_dek = $2 WHERE path = $3 AND version = $4"
             )
-            .bind(new_key_id)
-            .bind(&re_encrypted.nonce)
-            .bind(&re_encrypted.ciphertext)
-            .bind(&re_encrypted.tag)
+            .bind(new_version as i32)
+            .bind(&new_wrapped_dek)
             .bind(&path_str)
             .bind(version)
             .execute(&mut *tx)
