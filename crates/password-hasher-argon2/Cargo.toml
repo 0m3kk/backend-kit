@@ -1,6 +1,6 @@
 [package]
 name = "password-hasher-argon2"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "Argon2id password hasher implementation for the password-hasher crate."
 

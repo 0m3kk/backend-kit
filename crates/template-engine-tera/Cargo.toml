@@ -1,6 +1,6 @@
 [package]
 name = "template-engine-tera"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "Tera (Jinja2 syntax) implementation of TemplateEngine for backend-kit."
 
