@@ -7,6 +7,7 @@ use event_sourcing::{
 use kv_store::KvStore;
 use kv_store::memory::MemoryKvStore;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 // -----------------------------------------------------------------------------
 // Domain Events & Decision Models for Testing
@@ -109,7 +110,42 @@ impl DecisionModel for BankAccountModel {
 }
 
 // -----------------------------------------------------------------------------
-// Command Implementations
+// Custom Owned Domain Error Types
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Error)]
+pub enum RegisterUserError {
+    #[error("User ID cannot be empty")]
+    EmptyUserId,
+
+    #[error("Invalid email address format")]
+    InvalidEmail,
+
+    #[error("Email '{0}' is already registered")]
+    EmailAlreadyRegistered(String),
+
+    #[error(transparent)]
+    Cqrs(#[from] CommandError),
+}
+
+#[derive(Debug, Error)]
+pub enum TransferMoneyError {
+    #[error("Transfer amount must be greater than zero")]
+    ZeroAmount,
+
+    #[error("Account {account_id} has insufficient balance: {balance} < {amount}")]
+    InsufficientBalance {
+        account_id: String,
+        balance: u64,
+        amount: u64,
+    },
+
+    #[error(transparent)]
+    Cqrs(#[from] CommandError),
+}
+
+// -----------------------------------------------------------------------------
+// Command Implementations using Custom Owned Error Types
 // -----------------------------------------------------------------------------
 
 pub struct RegisterUserCommand {
@@ -118,21 +154,19 @@ pub struct RegisterUserCommand {
 }
 
 impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
-    type Error = CommandError;
+    type Error = RegisterUserError;
 
-    fn validate(&self) -> Result<(), CommandError> {
+    fn validate(&self) -> Result<(), RegisterUserError> {
         if self.user_id.is_empty() {
-            return Err(CommandError::Validation(
-                "user_id cannot be empty".to_string(),
-            ));
+            return Err(RegisterUserError::EmptyUserId);
         }
         if !self.email.contains('@') {
-            return Err(CommandError::Validation("invalid email format".to_string()));
+            return Err(RegisterUserError::InvalidEmail);
         }
         Ok(())
     }
 
-    fn normalize(&mut self) -> Result<(), CommandError> {
+    fn normalize(&mut self) -> Result<(), RegisterUserError> {
         self.user_id = self.user_id.trim().to_string();
         self.email = self.email.trim().to_lowercase();
         Ok(())
@@ -142,10 +176,14 @@ impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
         Single(UserRegistrationModel::new(&self.email))
     }
 
-    fn decide(&self, model: &UserRegistrationModel, _ctx: &()) -> Result<Vec<Event>, CommandError> {
+    fn decide(
+        &self,
+        model: &UserRegistrationModel,
+        _ctx: &(),
+    ) -> Result<Vec<Event>, RegisterUserError> {
         if model.is_registered {
-            return Err(CommandError::Decision(
-                "Email already registered".to_string(),
+            return Err(RegisterUserError::EmailAlreadyRegistered(
+                self.email.clone(),
             ));
         }
 
@@ -203,18 +241,16 @@ pub struct TransferMoneyCommand {
 }
 
 impl Command<Pair<BankAccountModel, BankAccountModel>> for TransferMoneyCommand {
-    type Error = CommandError;
+    type Error = TransferMoneyError;
 
-    fn validate(&self) -> Result<(), CommandError> {
+    fn validate(&self) -> Result<(), TransferMoneyError> {
         if self.amount == 0 {
-            return Err(CommandError::Validation(
-                "Transfer amount must be > 0".to_string(),
-            ));
+            return Err(TransferMoneyError::ZeroAmount);
         }
         Ok(())
     }
 
-    fn normalize(&mut self) -> Result<(), CommandError> {
+    fn normalize(&mut self) -> Result<(), TransferMoneyError> {
         self.from_account_id = self.from_account_id.trim().to_string();
         self.to_account_id = self.to_account_id.trim().to_string();
         Ok(())
@@ -231,9 +267,13 @@ impl Command<Pair<BankAccountModel, BankAccountModel>> for TransferMoneyCommand 
         &self,
         (from_acc, _to_acc): &(BankAccountModel, BankAccountModel),
         _ctx: &(),
-    ) -> Result<Vec<Event>, CommandError> {
+    ) -> Result<Vec<Event>, TransferMoneyError> {
         if from_acc.balance < self.amount {
-            return Err(CommandError::Decision("Insufficient funds".to_string()));
+            return Err(TransferMoneyError::InsufficientBalance {
+                account_id: self.from_account_id.clone(),
+                balance: from_acc.balance,
+                amount: self.amount,
+            });
         }
 
         let ev1 = MoneyDeposited {
@@ -277,7 +317,7 @@ async fn test_single_model_command_lifecycle() {
 }
 
 #[tokio::test]
-async fn test_command_validation_failure() {
+async fn test_command_owned_custom_error_type() {
     let store = InMemoryEventStore::new();
 
     let cmd = RegisterUserCommand {
@@ -288,8 +328,34 @@ async fn test_command_validation_failure() {
     let result = dispatch_command(cmd, &store, &()).await;
     assert!(result.is_err());
     match result.err().unwrap() {
-        CommandError::Validation(msg) => assert_eq!(msg, "user_id cannot be empty"),
-        other => panic!("Unexpected error type: {:?}", other),
+        RegisterUserError::EmptyUserId => {}
+        other => panic!("Unexpected error variant: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_transfer_command_owned_insufficient_funds_error() {
+    let store = InMemoryEventStore::new();
+
+    let cmd = TransferMoneyCommand {
+        from_account_id: "acc_a".to_string(),
+        to_account_id: "acc_b".to_string(),
+        amount: 200,
+    };
+
+    let result = dispatch_command(cmd, &store, &()).await;
+    assert!(result.is_err());
+    match result.err().unwrap() {
+        TransferMoneyError::InsufficientBalance {
+            account_id,
+            balance,
+            amount,
+        } => {
+            assert_eq!(account_id, "acc_a");
+            assert_eq!(balance, 0);
+            assert_eq!(amount, 200);
+        }
+        other => panic!("Unexpected error variant: {:?}", other),
     }
 }
 

@@ -48,17 +48,27 @@ In CQRS architectures, system mutations (Commands) are decoupled from query read
 use cqrs::{dispatch_command, Command, CommandError, Single};
 use event_sourcing::{DomainEvent, Event, EventId, EventType, SequencedEvent};
 
+#[derive(Debug, thiserror::Error)]
+pub enum RegisterUserError {
+    #[error("User ID cannot be empty")]
+    EmptyUserId,
+    #[error("Email '{0}' is already registered")]
+    EmailAlreadyRegistered(String),
+    #[error(transparent)]
+    Infrastructure(#[from] cqrs::CommandError),
+}
+
 pub struct RegisterUserCommand {
     pub user_id: String,
     pub email: String,
 }
 
 impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
-    type Error = CommandError;
+    type Error = RegisterUserError;
 
-    fn validate(&self) -> Result<(), CommandError> {
+    fn validate(&self) -> Result<(), RegisterUserError> {
         if self.user_id.is_empty() {
-            return Err(CommandError::Validation("user_id required".to_string()));
+            return Err(RegisterUserError::EmptyUserId);
         }
         Ok(())
     }
