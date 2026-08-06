@@ -22,6 +22,9 @@ DCB is an architectural pattern for event-sourced systems that decouples consist
 | **Read Options**          | [`ReadOptions`](src/types.rs#L370)     | Filtering, direction, limit options                          |
 | **Event Stream**          | [`EventStream`](src/store.rs#L27)      | Async reactive stream of `Result<SequencedEvent, ReadError>` |
 | **Event Store Interface** | [`EventStore`](src/store.rs#L30)       | Core trait for async `read` (stream) and `append`            |
+| **Decision Model**        | [`DecisionModel`](src/decision.rs)     | Trait for state projection and dynamic query specification   |
+| **Loaded Model**          | [`LoadedModel`](src/decision.rs)       | Container tracking model state `M` and `last_position`       |
+| **Event Store Extension** | [`EventStoreExt`](src/decision.rs)     | Extension trait for `load_decision_model`                    |
 
 ## Strongly-Typed Domain Event Usage
 
@@ -71,3 +74,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Decision Model Usage
+
+```rust
+use event_sourcing::{
+    DecisionModel, Event, EventStore, EventStoreExt, Query, QueryItem, Tag,
+};
+use event_sourcing::memory::InMemoryEventStore;
+
+pub struct BankAccount {
+    pub account_id: String,
+    pub balance: i64,
+}
+
+impl BankAccount {
+    pub fn new(account_id: impl Into<String>) -> Self {
+        Self {
+            account_id: account_id.into(),
+            balance: 0,
+        }
+    }
+}
+
+impl DecisionModel for BankAccount {
+    fn query(&self) -> Query {
+        Query::item(
+            QueryItem::new()
+                .with_types(["MoneyDeposited", "MoneyWithdrawn"])
+                .with_tag(Tag::key_value("account", &self.account_id)),
+        )
+    }
+
+    fn apply_event(&mut self, event: &Event) {
+        match event.event_type.as_str() {
+            "MoneyDeposited" => {
+                let amount: i64 = serde_json::from_value(event.data["amount"].clone()).unwrap_or(0);
+                self.balance += amount;
+            }
+            "MoneyWithdrawn" => {
+                let amount: i64 = serde_json::from_value(event.data["amount"].clone()).unwrap_or(0);
+                self.balance -= amount;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = InMemoryEventStore::new();
+
+    // Hydrate model directly from the store
+    let account = store.load_decision_model(BankAccount::new("ACC-123")).await?;
+
+    println!("Current balance: {}", account.balance);
+    println!("Last sequence position: {:?}", account.last_position);
+
+    Ok(())
+}
+```
+
