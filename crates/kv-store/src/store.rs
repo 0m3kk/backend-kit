@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::errors::KvError;
@@ -39,4 +40,43 @@ pub trait KvStore: Send + Sync {
     /// Purge up to `limit` expired key-value entries from the store.
     /// Returns the number of entries removed.
     async fn clean_expired(&self, limit: Option<usize>) -> Result<u64, KvError>;
+}
+
+#[async_trait]
+impl<T: KvStore + ?Sized> KvStore for Arc<T> {
+    async fn get(&self, key: &Key) -> Result<Option<Value>, KvError> {
+        (**self).get(key).await
+    }
+
+    async fn set(&self, key: Key, value: Value, options: SetOptions) -> Result<(), KvError> {
+        (**self).set(key, value, options).await
+    }
+
+    async fn delete(&self, key: &Key) -> Result<bool, KvError> {
+        (**self).delete(key).await
+    }
+
+    async fn exists(&self, key: &Key) -> Result<bool, KvError> {
+        (**self).exists(key).await
+    }
+
+    async fn batch(&self, ops: Vec<BatchOp>) -> Result<(), KvError> {
+        (**self).batch(ops).await
+    }
+
+    async fn scan(&self, options: ScanOptions) -> KvStream {
+        (**self).scan(options).await
+    }
+
+    async fn ttl(&self, key: &Key) -> Result<Option<Duration>, KvError> {
+        (**self).ttl(key).await
+    }
+
+    async fn clear(&self) -> Result<(), KvError> {
+        (**self).clear().await
+    }
+
+    async fn clean_expired(&self, limit: Option<usize>) -> Result<u64, KvError> {
+        (**self).clean_expired(limit).await
+    }
 }
