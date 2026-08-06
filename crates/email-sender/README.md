@@ -8,6 +8,13 @@ Core traits, domain models, error definitions, and fluent email builder for `bac
 - **Domain Models**: Structured representation of [`EmailAddress`], [`Attachment`], [`Email`], and [`EmailResponse`].
 - **Fluent Builder**: [`EmailBuilder`] to construct and validate emails before transmission.
 - **Robust Error Handling**: Explicit [`EmailError`] enum for validation failures, provider errors, and transport issues.
+- **In-Memory Sender**: [`memory::MemoryEmailSender`] for unit testing and local development (behind the `memory` feature flag).
+
+## Feature Flags
+
+| Feature  | Description                                              | Default |
+| :------- | :------------------------------------------------------- | :------ |
+| `memory` | In-memory `MemoryEmailSender` implementation for testing | No      |
 
 ## Usage
 

@@ -6,6 +6,12 @@ Core specification, types, and trait definitions for Key-Value Stores in `backen
 
 `kv-store` provides a unified, async Key-Value store interface (`KvStore`) that supports get, set, delete, atomic batch mutations, range scanning, and TTL expiration across multiple backends.
 
+## Feature Flags
+
+| Feature  | Description                                                  | Default |
+| :------- | :----------------------------------------------------------- | :------ |
+| `memory` | In-memory `MemoryKvStore` implementation with TTL & scanning | No      |
+
 ## Specification & Trait Mapping
 
 | Concept            | Type / Trait in `kv-store`    | Description                                                       |

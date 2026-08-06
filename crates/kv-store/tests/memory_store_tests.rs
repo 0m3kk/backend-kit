@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
+use kv_store::memory::MemoryKvStore;
 use kv_store::{BatchOp, Key, KvError, KvStore, ScanOptions, SetOptions, Value};
-use kv_store_memory::MemoryKvStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,7 +42,6 @@ async fn test_set_nx_xx_conditions() -> Result<(), KvError> {
     let val1 = Value::from("val1");
     let val2 = Value::from("val2");
 
-    // set XX when key doesn't exist -> fail
     assert_eq!(
         store
             .set(key.clone(), val1.clone(), SetOptions::new().if_exists())
@@ -50,12 +49,10 @@ async fn test_set_nx_xx_conditions() -> Result<(), KvError> {
         Err(KvError::ConditionFailed)
     );
 
-    // set NX when key doesn't exist -> success
     store
         .set(key.clone(), val1.clone(), SetOptions::new().if_not_exists())
         .await?;
 
-    // set NX when key exists -> fail
     assert_eq!(
         store
             .set(key.clone(), val2.clone(), SetOptions::new().if_not_exists())
@@ -63,7 +60,6 @@ async fn test_set_nx_xx_conditions() -> Result<(), KvError> {
         Err(KvError::ConditionFailed)
     );
 
-    // set XX when key exists -> success
     store
         .set(key.clone(), val2.clone(), SetOptions::new().if_exists())
         .await?;
@@ -120,7 +116,6 @@ async fn test_batch_operations_and_atomic_failure() -> Result<(), KvError> {
     assert_eq!(store.get(&Key::from("b1")).await?, Some(Value::from("v1")));
     assert_eq!(store.get(&Key::from("b2")).await?, Some(Value::from("v2")));
 
-    // Batch with failing condition -> should abort without modifying state
     let failing_ops = vec![
         BatchOp::Put {
             key: Key::from("b3"),
@@ -130,7 +125,7 @@ async fn test_batch_operations_and_atomic_failure() -> Result<(), KvError> {
         BatchOp::Put {
             key: Key::from("b1"),
             value: Value::from("new_v1"),
-            options: SetOptions::new().if_not_exists(), // b1 exists -> fail
+            options: SetOptions::new().if_not_exists(),
         },
     ];
 
@@ -161,7 +156,6 @@ async fn test_scan_options_range_and_reverse() -> Result<(), KvError> {
         .set(Key::from("d"), Value::from("4"), SetOptions::new())
         .await?;
 
-    // Forward range scan [b, d] with limit 2
     let scan_opts = ScanOptions::new()
         .with_range(Some(Key::from("b")), Some(Key::from("d")))
         .with_limit(2);
@@ -173,7 +167,6 @@ async fn test_scan_options_range_and_reverse() -> Result<(), KvError> {
     }
     assert_eq!(keys, vec!["b", "c"]);
 
-    // Reverse scan
     let mut rev_stream = store.scan(ScanOptions::new().reverse()).await;
     let mut rev_keys = Vec::new();
     while let Some(res) = rev_stream.next().await {
@@ -189,7 +182,7 @@ async fn test_binary_and_large_payloads() -> Result<(), KvError> {
     let store = MemoryKvStore::new();
 
     let binary_key = Key::new(vec![0x00, 0xff, 0xfe, 0x01]);
-    let large_value = Value::new(vec![42u8; 1_000_000]); // 1MB payload
+    let large_value = Value::new(vec![42u8; 1_000_000]);
 
     store
         .set(binary_key.clone(), large_value.clone(), SetOptions::new())

@@ -1,12 +1,12 @@
 pub mod errors;
-pub mod manager;
-pub mod traits;
+pub mod hasher;
+#[cfg(feature = "noop")]
+pub mod noop;
 pub mod types;
 
 pub use errors::PasswordError;
-pub use manager::{PasswordHasherManager, PasswordHasherManagerBuilder};
-pub use traits::PasswordHasher;
+pub use hasher::PasswordHasher;
 pub use types::{Algorithm, PasswordHash};
 
 #[cfg(feature = "async")]
-pub use traits::AsyncPasswordHasher;
+pub use hasher::AsyncPasswordHasher;

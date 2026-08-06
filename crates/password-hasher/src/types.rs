@@ -106,3 +106,79 @@ impl fmt::Display for PasswordHash {
         write!(f, "{}", self.hash)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_algorithm_display() {
+        assert_eq!(Algorithm::Argon2id.to_string(), "argon2id");
+        assert_eq!(Algorithm::Bcrypt.to_string(), "bcrypt");
+        assert_eq!(Algorithm::Noop.to_string(), "noop");
+    }
+
+    #[test]
+    fn test_algorithm_parse() {
+        assert_eq!(
+            "argon2id".parse::<Algorithm>().unwrap(),
+            Algorithm::Argon2id
+        );
+        assert_eq!("argon2".parse::<Algorithm>().unwrap(), Algorithm::Argon2id);
+        assert_eq!("bcrypt".parse::<Algorithm>().unwrap(), Algorithm::Bcrypt);
+        assert_eq!("2b".parse::<Algorithm>().unwrap(), Algorithm::Bcrypt);
+        assert_eq!("2a".parse::<Algorithm>().unwrap(), Algorithm::Bcrypt);
+        assert_eq!("2y".parse::<Algorithm>().unwrap(), Algorithm::Bcrypt);
+        assert_eq!("noop".parse::<Algorithm>().unwrap(), Algorithm::Noop);
+        assert_eq!("plaintext".parse::<Algorithm>().unwrap(), Algorithm::Noop);
+        assert!("unknown".parse::<Algorithm>().is_err());
+    }
+
+    #[test]
+    fn test_password_hash_detect_argon2id() {
+        let hash = PasswordHash::parse(
+            "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RGF0YWJhc2VTZWNyZXRLZXlIYXNoVmFsdWU",
+        )
+        .unwrap();
+        assert_eq!(hash.algorithm(), Algorithm::Argon2id);
+    }
+
+    #[test]
+    fn test_password_hash_detect_bcrypt() {
+        let hash =
+            PasswordHash::parse("$2b$12$e8Y7Yp3P9D/w/G5eH9T1eeG3Q1.2K8eG3Q1.2K8eG3Q1.2K8eG3Q1")
+                .unwrap();
+        assert_eq!(hash.algorithm(), Algorithm::Bcrypt);
+
+        let hash_2a =
+            PasswordHash::parse("$2a$04$XYZXYZXYZXYZXYZXYZXYOABCDEFGHIJKLMNOPQRSTUVWXYZ012345")
+                .unwrap();
+        assert_eq!(hash_2a.algorithm(), Algorithm::Bcrypt);
+    }
+
+    #[test]
+    fn test_password_hash_detect_noop() {
+        let hash = PasswordHash::parse("$noop$secret123").unwrap();
+        assert_eq!(hash.algorithm(), Algorithm::Noop);
+    }
+
+    #[test]
+    fn test_password_hash_invalid_format() {
+        let err = PasswordHash::parse("invalid_hash_string");
+        assert!(matches!(err, Err(PasswordError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn test_password_hash_new_and_accessors() {
+        let hash = PasswordHash::new("$argon2id$test".to_string(), Algorithm::Argon2id);
+        assert_eq!(hash.as_str(), "$argon2id$test");
+        assert_eq!(hash.algorithm(), Algorithm::Argon2id);
+        assert_eq!(hash.to_string(), "$argon2id$test");
+    }
+
+    #[test]
+    fn test_password_hash_into_string() {
+        let hash = PasswordHash::new("$noop$x".to_string(), Algorithm::Noop);
+        assert_eq!(hash.into_string(), "$noop$x");
+    }
+}
