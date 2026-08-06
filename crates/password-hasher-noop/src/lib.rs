@@ -1,9 +1,5 @@
-use crate::errors::PasswordError;
-use crate::traits::PasswordHasher;
-use crate::types::{Algorithm, PasswordHash};
+pub use password_hasher::*;
 
-#[cfg(feature = "async")]
-use crate::traits::AsyncPasswordHasher;
 #[cfg(feature = "async")]
 use async_trait::async_trait;
 

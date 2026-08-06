@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use password_hasher::{
-    Algorithm, Argon2Hasher, AsyncPasswordHasher, BcryptHasher, NoopHasher, PasswordError,
-    PasswordHash, PasswordHasher, PasswordHasherManager,
+    Algorithm, AsyncPasswordHasher, PasswordError, PasswordHash, PasswordHasher,
+    PasswordHasherManager,
 };
+use password_hasher_argon2::Argon2Hasher;
+use password_hasher_bcrypt::BcryptHasher;
+use password_hasher_noop::NoopHasher;
 
 #[test]
 fn test_algorithm_display_and_parse() {
@@ -86,7 +89,11 @@ fn test_hasher_manager_routing_and_rehash() {
 
 #[tokio::test]
 async fn test_async_password_hasher() {
-    let manager = PasswordHasherManager::default();
+    let manager = PasswordHasherManager::builder()
+        .with_hasher(Arc::new(Argon2Hasher::new()))
+        .default_algorithm(Algorithm::Argon2id)
+        .build()
+        .unwrap();
     let password = "async_computation_password_456!".to_string();
 
     let hash = manager.hash_password_async(password.clone()).await.unwrap();
