@@ -1,0 +1,18 @@
+[package]
+name = "template-engine-tera"
+version = "0.1.0"
+edition = "2024"
+description = "Tera (Jinja2 syntax) implementation of TemplateEngine for backend-kit."
+
+[dependencies]
+glob = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+template-engine = { path = "../template-engine" }
+tera = "2.1"
+walkdir = "2.5"
+
+[dev-dependencies]
+tempfile = "3.27"
+
+[lints]
+workspace = true
