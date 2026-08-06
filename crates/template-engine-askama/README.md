@@ -13,6 +13,7 @@ Askama (type-safe compile-time HTML templates) implementation of [`TemplateEngin
 ```rust
 use askama::Template;
 use serde::{Deserialize, Serialize};
+use template_engine::TemplateEngine;
 use template_engine_askama::{render_askama, AskamaTemplateEngine};
 
 #[derive(Template, Serialize, Deserialize)]

@@ -45,17 +45,35 @@ In CQRS architectures, system mutations (Commands) are decoupled from query read
 ### 1. Single-Model Command (`Single<M>`)
 
 ```rust
-use cqrs::{dispatch_command, Command, CommandError, Single};
-use event_sourcing::{DomainEvent, Event, EventId, EventType, SequencedEvent};
+use cqrs::{Command, CommandError, Single};
+use event_sourcing::{DecisionModel, DomainEvent, Event, EventId, EventType, Query};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, thiserror::Error)]
-pub enum RegisterUserError {
-    #[error("User ID cannot be empty")]
-    EmptyUserId,
-    #[error("Email '{0}' is already registered")]
-    EmailAlreadyRegistered(String),
-    #[error(transparent)]
-    Infrastructure(#[from] cqrs::CommandError),
+#[derive(Default, Serialize, Deserialize)]
+pub struct UserRegistrationModel {
+    pub email: String,
+    pub is_registered: bool,
+}
+
+impl DecisionModel for UserRegistrationModel {
+    fn query(&self) -> Query {
+        Query::all()
+    }
+    fn apply_event(&mut self, _event: &Event) {
+        self.is_registered = true;
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UserRegistered {
+    pub user_id: String,
+    pub email: String,
+}
+
+impl DomainEvent for UserRegistered {
+    fn event_type() -> EventType {
+        EventType::new("UserRegistered")
+    }
 }
 
 pub struct RegisterUserCommand {
@@ -64,11 +82,11 @@ pub struct RegisterUserCommand {
 }
 
 impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
-    type Error = RegisterUserError;
+    type Error = CommandError;
 
-    fn validate(&self) -> Result<(), RegisterUserError> {
+    fn validate(&self) -> Result<(), CommandError> {
         if self.user_id.is_empty() {
-            return Err(RegisterUserError::EmptyUserId);
+            return Err(CommandError::Validation("User ID cannot be empty".to_string()));
         }
         Ok(())
     }
@@ -80,7 +98,7 @@ impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
     }
 
     fn models(&self) -> Single<UserRegistrationModel> {
-        Single(UserRegistrationModel::new(&self.email))
+        Single(UserRegistrationModel { email: self.email.clone(), is_registered: false })
     }
 
     fn decide(&self, model: &UserRegistrationModel, _ctx: &()) -> Result<Vec<Event>, CommandError> {
@@ -89,14 +107,12 @@ impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
         }
 
         let event = UserRegistered { user_id: self.user_id.clone(), email: self.email.clone() }
-            .to_event(EventId::new_v4())?;
+            .to_event(EventId::new("evt-1"))
+            .map_err(|e| CommandError::Decision(e.to_string()))?;
 
         Ok(vec![event])
     }
 }
-
-// Execution (Framework automatically hydrates model & commits events with DCB concurrency condition):
-let appended: Vec<SequencedEvent> = dispatch_command(cmd, &event_store, &()).await?;
 ```
 
 ---
@@ -106,7 +122,34 @@ let appended: Vec<SequencedEvent> = dispatch_command(cmd, &event_store, &()).awa
 Commands loading multiple decision models as type-safe tuples (e.g. Money Transfer loading two bank accounts):
 
 ```rust
-use cqrs::{dispatch_command, Command, CommandError, Pair};
+use cqrs::{Command, CommandError, Pair};
+use event_sourcing::{DecisionModel, DomainEvent, Event, EventId, EventType, Query};
+use serde::{Deserialize, Serialize};
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct BankAccountModel {
+    pub account_id: String,
+    pub balance: u64,
+}
+
+impl BankAccountModel {
+    pub fn new(id: &str) -> Self {
+        Self { account_id: id.to_string(), balance: 100 }
+    }
+}
+
+impl DecisionModel for BankAccountModel {
+    fn query(&self) -> Query { Query::all() }
+    fn apply_event(&mut self, _event: &Event) {}
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MoneyWithdrawn { pub account_id: String, pub amount: u64 }
+impl DomainEvent for MoneyWithdrawn { fn event_type() -> EventType { EventType::new("MoneyWithdrawn") } }
+
+#[derive(Serialize, Deserialize)]
+pub struct MoneyDeposited { pub account_id: String, pub amount: u64 }
+impl DomainEvent for MoneyDeposited { fn event_type() -> EventType { EventType::new("MoneyDeposited") } }
 
 pub struct TransferMoneyCommand {
     pub from_account_id: String,
@@ -126,16 +169,19 @@ impl Command<Pair<BankAccountModel, BankAccountModel>> for TransferMoneyCommand 
 
     fn decide(
         &self,
-        (from_acc, to_acc): &(BankAccountModel, BankAccountModel),
+        (from_acc, _to_acc): &(BankAccountModel, BankAccountModel),
         _ctx: &(),
     ) -> Result<Vec<Event>, CommandError> {
         if from_acc.balance < self.amount {
             return Err(CommandError::Decision("Insufficient funds".to_string()));
         }
 
-        // Generate events for both accounts
-        let ev1 = MoneyWithdrawn { account_id: self.from_account_id.clone(), amount: self.amount }.to_event(...)?:
-        let ev2 = MoneyDeposited { account_id: self.to_account_id.clone(), amount: self.amount }.to_event(...)?:
+        let ev1 = MoneyWithdrawn { account_id: self.from_account_id.clone(), amount: self.amount }
+            .to_event(EventId::new("ev-1"))
+            .map_err(|e| CommandError::Decision(e.to_string()))?;
+        let ev2 = MoneyDeposited { account_id: self.to_account_id.clone(), amount: self.amount }
+            .to_event(EventId::new("ev-2"))
+            .map_err(|e| CommandError::Decision(e.to_string()))?;
 
         Ok(vec![ev1, ev2])
     }
@@ -152,8 +198,21 @@ Loads decision models from KV store in $O(1)$ time, catches up remaining events,
 use cqrs::dispatch_command_with_snapshot;
 use event_sourcing::snapshot::SnapshotOptions;
 
-let snapshot_options = SnapshotOptions::new(10); // auto-snapshot every 10 events
-let appended = dispatch_command_with_snapshot(cmd, &event_store, &kv_store, snapshot_options, &()).await?;
+pub async fn run_snapshot_dispatch<ES, KS, C, M>(
+    cmd: C,
+    event_store: &ES,
+    kv_store: &KS,
+) -> Result<Vec<event_sourcing::SequencedEvent>, cqrs::CommandError>
+where
+    ES: event_sourcing::EventStore,
+    KS: kv_store::KvStore,
+    M: cqrs::DecisionModels,
+    C: cqrs::Command<M, Error = cqrs::CommandError>,
+{
+    let snapshot_options = SnapshotOptions::new(10); // auto-snapshot every 10 events
+    let appended = dispatch_command_with_snapshot(cmd, event_store, kv_store, snapshot_options, &()).await?;
+    Ok(appended)
+}
 ```
 
 ---
@@ -161,15 +220,38 @@ let appended = dispatch_command_with_snapshot(cmd, &event_store, &kv_store, snap
 ## Read Side View Pipeline (`View<C>`)
 
 ```rust
-use cqrs::{CatchupWorker, KvCheckpointStore};
-use std::time::Duration;
+use cqrs::{CatchupWorker, View, ViewError};
+use event_sourcing::{Query, SequencedEvent};
+use async_trait::async_trait;
 
-let worker = CatchupWorker::new(db_context, event_store, checkpoint_store)
-    .register_view(UserProfileView::default())
-    .register_view(OrderSummaryView::default());
+pub struct UserProfileView;
 
-// Run parallel catch-up background loop:
-tokio::spawn(worker.run_loop(Duration::from_secs(1)));
+#[async_trait]
+impl<C: Send + Sync> View<C> for UserProfileView {
+    fn view_name(&self) -> &'static str {
+        "UserProfileView"
+    }
+    fn subscription_query(&self) -> Query {
+        Query::all()
+    }
+    async fn apply_event(&self, event: &SequencedEvent, _ctx: &C) -> Result<(), ViewError> {
+        println!("Projected event {}", event.position);
+        Ok(())
+    }
+}
+
+pub async fn start_worker<C, ES, CP>(ctx: C, event_store: ES, checkpoint_store: CP)
+where
+    C: Send + Sync + 'static,
+    ES: event_sourcing::EventStore + 'static,
+    CP: cqrs::CheckpointStore<C> + 'static,
+{
+    let worker = CatchupWorker::new(ctx, event_store, checkpoint_store)
+        .register_view(UserProfileView);
+
+    // Run parallel catch-up background loop:
+    tokio::spawn(worker.run_loop(std::time::Duration::from_secs(1)));
+}
 ```
 
 ---

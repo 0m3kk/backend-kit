@@ -16,6 +16,7 @@ thiserror = "2.0"
 tokio = { version = "1.53", features = ["rt", "sync"], optional = true }
 
 [dev-dependencies]
+password-hasher-argon2 = { path = "../password-hasher-argon2" }
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
 
 [[test]]
