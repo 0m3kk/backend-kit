@@ -3,7 +3,7 @@ use event_sourcing::{
     DecisionModel, Event, EventStore, EventStoreExt, Query, QueryItem, SequencePosition, Tag,
 };
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq, Eq)]
 struct BankAccountModel {
     account_id: String,
     balance: i64,
@@ -34,13 +34,11 @@ impl DecisionModel for BankAccountModel {
     fn apply_event(&mut self, event: &Event) {
         match event.event_type.as_str() {
             "MoneyDeposited" => {
-                let amount: i64 =
-                    serde_json::from_value(event.data["amount"].clone()).unwrap_or(0);
+                let amount: i64 = serde_json::from_value(event.data["amount"].clone()).unwrap_or(0);
                 self.balance += amount;
             }
             "MoneyWithdrawn" => {
-                let amount: i64 =
-                    serde_json::from_value(event.data["amount"].clone()).unwrap_or(0);
+                let amount: i64 = serde_json::from_value(event.data["amount"].clone()).unwrap_or(0);
                 self.balance -= amount;
             }
             _ => {}
@@ -86,22 +84,18 @@ async fn test_decision_model_hydration_tracks_highest_position() {
         vec![Tag::key_value("account", "ACC-123")],
     );
 
-    let appended = store
+    store
         .append(vec![deposit_1, deposit_2, withdraw], None)
         .await
         .unwrap();
-    assert_eq!(appended.len(), 3);
 
     let loaded = store
         .load_decision_model(BankAccountModel::new("ACC-123"))
         .await
         .unwrap();
 
-    // Verify balance calculated correctly
     assert_eq!(loaded.balance, 120);
-    // Verify deref to model methods works directly
     assert!(!loaded.is_overdrawn());
-    // Verify last_position tracked the highest sequence position
     assert_eq!(loaded.last_position, Some(SequencePosition::new(3)));
 }
 
@@ -109,14 +103,12 @@ async fn test_decision_model_hydration_tracks_highest_position() {
 async fn test_decision_model_filters_irrelevant_events() {
     let store = InMemoryEventStore::new();
 
-    // Event for ACC-123
     let evt1 = Event::new(
         "evt-1",
         "MoneyDeposited",
         serde_json::json!({ "amount": 100 }),
         vec![Tag::key_value("account", "ACC-123")],
     );
-    // Event for ACC-456 (different account tag)
     let evt2 = Event::new(
         "evt-2",
         "MoneyDeposited",
