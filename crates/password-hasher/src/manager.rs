@@ -57,53 +57,6 @@ impl PasswordHasherManager {
     }
 }
 
-impl Default for PasswordHasherManager {
-    fn default() -> Self {
-        let mut builder = PasswordHasherManagerBuilder::default();
-
-        #[cfg(feature = "argon2")]
-        {
-            builder = builder
-                .with_hasher(Arc::new(crate::algorithms::argon2::Argon2Hasher::new()))
-                .default_algorithm(Algorithm::Argon2id);
-        }
-
-        #[cfg(all(not(feature = "argon2"), feature = "bcrypt"))]
-        {
-            builder = builder
-                .with_hasher(Arc::new(crate::algorithms::bcrypt::BcryptHasher::new()))
-                .default_algorithm(Algorithm::Bcrypt);
-        }
-
-        #[cfg(all(not(feature = "argon2"), not(feature = "bcrypt"), feature = "noop"))]
-        {
-            builder = builder
-                .with_hasher(Arc::new(crate::algorithms::noop::NoopHasher::new()))
-                .default_algorithm(Algorithm::Noop);
-        }
-
-        #[cfg(feature = "bcrypt")]
-        {
-            if !builder.hashers.contains_key(&Algorithm::Bcrypt) {
-                builder =
-                    builder.with_hasher(Arc::new(crate::algorithms::bcrypt::BcryptHasher::new()));
-            }
-        }
-
-        #[cfg(feature = "noop")]
-        {
-            if !builder.hashers.contains_key(&Algorithm::Noop) {
-                builder = builder.with_hasher(Arc::new(crate::algorithms::noop::NoopHasher::new()));
-            }
-        }
-
-        builder.build().unwrap_or_else(|_| Self {
-            default_algorithm: Algorithm::Noop,
-            hashers: HashMap::new(),
-        })
-    }
-}
-
 impl PasswordHasher for PasswordHasherManager {
     fn hash_password(&self, password: &str) -> Result<PasswordHash, PasswordError> {
         let hasher = self.get_hasher(self.default_algorithm)?;

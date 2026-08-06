@@ -1,0 +1,24 @@
+[package]
+name = "password-hasher-argon2"
+version = "0.1.0"
+edition = "2024"
+description = "Argon2id password hasher implementation for the password-hasher crate."
+
+[features]
+default = ["async"]
+async = ["dep:async-trait", "dep:tokio"]
+
+[dependencies]
+argon2 = { version = "0.5", features = ["std", "password-hash"] }
+async-trait = { version = "0.1", optional = true }
+password-hasher = { path = "../password-hasher" }
+rand_core = { version = "0.6", features = ["getrandom"] }
+tokio = { version = "1.53", features = ["rt", "sync"], optional = true }
+
+[dev-dependencies]
+password-hasher-bcrypt = { path = "../password-hasher-bcrypt" }
+password-hasher-noop = { path = "../password-hasher-noop" }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

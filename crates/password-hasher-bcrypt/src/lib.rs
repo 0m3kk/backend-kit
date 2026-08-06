@@ -1,11 +1,7 @@
+pub use password_hasher::*;
+
 use bcrypt::{DEFAULT_COST, hash, verify};
 
-use crate::errors::PasswordError;
-use crate::traits::PasswordHasher;
-use crate::types::{Algorithm, PasswordHash};
-
-#[cfg(feature = "async")]
-use crate::traits::AsyncPasswordHasher;
 #[cfg(feature = "async")]
 use async_trait::async_trait;
 

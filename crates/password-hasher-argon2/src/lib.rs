@@ -1,3 +1,5 @@
+pub use password_hasher::*;
+
 use argon2::{
     Argon2, Params, Version,
     password_hash::{
@@ -7,12 +9,6 @@ use argon2::{
 };
 use rand_core::OsRng;
 
-use crate::errors::PasswordError;
-use crate::traits::PasswordHasher;
-use crate::types::{Algorithm, PasswordHash};
-
-#[cfg(feature = "async")]
-use crate::traits::AsyncPasswordHasher;
 #[cfg(feature = "async")]
 use async_trait::async_trait;
 
