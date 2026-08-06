@@ -10,6 +10,9 @@ members = [
     "crates/kv-store-postgres",
     "crates/kv-store-redb",
     "crates/kv-store-redis",
+    "crates/secret-store",
+    "crates/secret-store-memory",
+    "crates/secret-store-postgres",
 ]
 
 [workspace.lints.clippy]
