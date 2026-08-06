@@ -1,0 +1,13 @@
+[package]
+name = "email-sender"
+version = "0.1.0"
+edition = "2024"
+description = "Core traits, models, errors, and builder for email sending in backend-kit."
+
+[dependencies]
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+
+[lints]
+workspace = true

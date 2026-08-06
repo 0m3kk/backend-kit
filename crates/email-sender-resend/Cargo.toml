@@ -1,0 +1,16 @@
+[package]
+name = "email-sender-resend"
+version = "0.1.0"
+edition = "2024"
+description = "Resend API provider implementation of EmailSender for backend-kit."
+
+[dependencies]
+async-trait = "0.1"
+email-sender = { path = "../email-sender" }
+resend-rs = "0.29"
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
