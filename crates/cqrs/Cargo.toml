@@ -1,0 +1,42 @@
+[package]
+name = "cqrs"
+version = "0.0.0"
+edition = "2024"
+
+[features]
+memory = []
+
+[dependencies]
+async-trait = "0.1"
+event-sourcing = { path = "../event-sourcing" }
+futures-util = "0.3"
+kv-store = { path = "../kv-store" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.53", features = ["sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+event-sourcing = { path = "../event-sourcing", features = ["memory"] }
+kv-store = { path = "../kv-store", features = ["memory"] }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "view_tests"
+required-features = ["memory"]
+
+[[test]]
+name = "worker_tests"
+required-features = ["memory"]
+
+[[test]]
+name = "checkpoint_tests"
+required-features = ["memory"]
+
+[[test]]
+name = "command_tests"
+required-features = ["memory"]
+
+[lints]
+workspace = true

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::types::{AppendCondition, Event, Query, ReadOptions, SequencedEvent};
@@ -42,4 +43,19 @@ pub trait EventStore: Send + Sync {
         events: Vec<Event>,
         condition: Option<AppendCondition>,
     ) -> Result<Vec<SequencedEvent>, AppendError>;
+}
+
+#[async_trait]
+impl<T: EventStore + ?Sized> EventStore for Arc<T> {
+    async fn read(&self, query: &Query, options: ReadOptions) -> EventStream {
+        (**self).read(query, options).await
+    }
+
+    async fn append(
+        &self,
+        events: Vec<Event>,
+        condition: Option<AppendCondition>,
+    ) -> Result<Vec<SequencedEvent>, AppendError> {
+        (**self).append(events, condition).await
+    }
 }
