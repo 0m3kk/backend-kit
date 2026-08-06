@@ -378,7 +378,11 @@ impl Query {
         let canonical = self.canonical_string();
         let mut hasher = Sha256::new();
         hasher.update(canonical.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect()
     }
 
     /// Combines multiple queries into a single optimized query using OR logic.

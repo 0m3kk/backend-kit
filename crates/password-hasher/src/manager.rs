@@ -75,19 +75,7 @@ impl Default for PasswordHasherManager {
                 .default_algorithm(Algorithm::Bcrypt);
         }
 
-        #[cfg(all(not(feature = "argon2"), not(feature = "bcrypt"), feature = "pbkdf2"))]
-        {
-            builder = builder
-                .with_hasher(Arc::new(crate::algorithms::pbkdf2::Pbkdf2Hasher::new()))
-                .default_algorithm(Algorithm::Pbkdf2Sha256);
-        }
-
-        #[cfg(all(
-            not(feature = "argon2"),
-            not(feature = "bcrypt"),
-            not(feature = "pbkdf2"),
-            feature = "noop"
-        ))]
+        #[cfg(all(not(feature = "argon2"), not(feature = "bcrypt"), feature = "noop"))]
         {
             builder = builder
                 .with_hasher(Arc::new(crate::algorithms::noop::NoopHasher::new()))
@@ -99,14 +87,6 @@ impl Default for PasswordHasherManager {
             if !builder.hashers.contains_key(&Algorithm::Bcrypt) {
                 builder =
                     builder.with_hasher(Arc::new(crate::algorithms::bcrypt::BcryptHasher::new()));
-            }
-        }
-
-        #[cfg(feature = "pbkdf2")]
-        {
-            if !builder.hashers.contains_key(&Algorithm::Pbkdf2Sha256) {
-                builder =
-                    builder.with_hasher(Arc::new(crate::algorithms::pbkdf2::Pbkdf2Hasher::new()));
             }
         }
 

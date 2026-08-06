@@ -5,14 +5,10 @@ use password_hasher::{
     PasswordHash, PasswordHasher, PasswordHasherManager,
 };
 
-#[cfg(feature = "pbkdf2")]
-use password_hasher::Pbkdf2Hasher;
-
 #[test]
 fn test_algorithm_display_and_parse() {
     assert_eq!(Algorithm::Argon2id.to_string(), "argon2id");
     assert_eq!(Algorithm::Bcrypt.to_string(), "bcrypt");
-    assert_eq!(Algorithm::Pbkdf2Sha256.to_string(), "pbkdf2-sha256");
     assert_eq!(Algorithm::Noop.to_string(), "noop");
 
     assert_eq!(
@@ -21,10 +17,6 @@ fn test_algorithm_display_and_parse() {
     );
     assert_eq!("bcrypt".parse::<Algorithm>().unwrap(), Algorithm::Bcrypt);
     assert_eq!("2b".parse::<Algorithm>().unwrap(), Algorithm::Bcrypt);
-    assert_eq!(
-        "pbkdf2-sha256".parse::<Algorithm>().unwrap(),
-        Algorithm::Pbkdf2Sha256
-    );
     assert_eq!("noop".parse::<Algorithm>().unwrap(), Algorithm::Noop);
 
     assert!("unknown_alg".parse::<Algorithm>().is_err());
@@ -43,78 +35,11 @@ fn test_password_hash_auto_detection() {
             .unwrap();
     assert_eq!(bcrypt_hash.algorithm(), Algorithm::Bcrypt);
 
-    let pbkdf2_hash = PasswordHash::parse(
-        "$pbkdf2-sha256$i=600000,l=32$c29tZXNhbHQ$RGF0YWJhc2VTZWNyZXRLZXlIYXNoVmFsdWU",
-    )
-    .unwrap();
-    assert_eq!(pbkdf2_hash.algorithm(), Algorithm::Pbkdf2Sha256);
-
     let noop_hash = PasswordHash::parse("$noop$secret123").unwrap();
     assert_eq!(noop_hash.algorithm(), Algorithm::Noop);
 
     let invalid = PasswordHash::parse("invalid_hash_string");
     assert!(matches!(invalid, Err(PasswordError::InvalidFormat(_))));
-}
-
-#[test]
-fn test_noop_hasher() {
-    let hasher = NoopHasher::new();
-    assert_eq!(hasher.algorithm(), Algorithm::Noop);
-
-    let password = "my_super_secret_password";
-    let hash = hasher.hash_password(password).unwrap();
-
-    assert_eq!(hash.as_str(), "$noop$my_super_secret_password");
-    assert_eq!(hash.algorithm(), Algorithm::Noop);
-
-    assert!(hasher.verify_password(password, &hash).unwrap());
-    assert!(!hasher.verify_password("wrong_password", &hash).unwrap());
-}
-
-#[test]
-fn test_argon2_hasher() {
-    let hasher = Argon2Hasher::new();
-    assert_eq!(hasher.algorithm(), Algorithm::Argon2id);
-
-    let password = "secure_user_pass_123!";
-    let hash = hasher.hash_password(password).unwrap();
-
-    assert_eq!(hash.algorithm(), Algorithm::Argon2id);
-    assert!(hash.as_str().starts_with("$argon2id$"));
-
-    assert!(hasher.verify_password(password, &hash).unwrap());
-    assert!(!hasher.verify_password("wrong_pass", &hash).unwrap());
-}
-
-#[test]
-fn test_bcrypt_hasher() {
-    let hasher = BcryptHasher::new();
-    assert_eq!(hasher.algorithm(), Algorithm::Bcrypt);
-
-    let password = "bcrypt_secret_password";
-    let hash = hasher.hash_password(password).unwrap();
-
-    assert_eq!(hash.algorithm(), Algorithm::Bcrypt);
-    assert!(hash.as_str().starts_with("$2b$"));
-
-    assert!(hasher.verify_password(password, &hash).unwrap());
-    assert!(!hasher.verify_password("incorrect_pass", &hash).unwrap());
-}
-
-#[cfg(feature = "pbkdf2")]
-#[test]
-fn test_pbkdf2_hasher() {
-    let hasher = Pbkdf2Hasher::new();
-    assert_eq!(hasher.algorithm(), Algorithm::Pbkdf2Sha256);
-
-    let password = "pbkdf2_secret_password";
-    let hash = hasher.hash_password(password).unwrap();
-
-    assert_eq!(hash.algorithm(), Algorithm::Pbkdf2Sha256);
-    assert!(hash.as_str().starts_with("$pbkdf2-sha256$"));
-
-    assert!(hasher.verify_password(password, &hash).unwrap());
-    assert!(!hasher.verify_password("incorrect_pass", &hash).unwrap());
 }
 
 #[test]

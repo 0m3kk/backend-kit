@@ -12,8 +12,6 @@ pub enum Algorithm {
     Argon2id,
     /// Bcrypt (Widely used legacy and modern password hashing)
     Bcrypt,
-    /// PBKDF2 with SHA-256 HMAC
-    Pbkdf2Sha256,
     /// No-op / Plaintext hasher (FOR TESTING ONLY)
     Noop,
 }
@@ -23,7 +21,6 @@ impl fmt::Display for Algorithm {
         match self {
             Self::Argon2id => write!(f, "argon2id"),
             Self::Bcrypt => write!(f, "bcrypt"),
-            Self::Pbkdf2Sha256 => write!(f, "pbkdf2-sha256"),
             Self::Noop => write!(f, "noop"),
         }
     }
@@ -36,7 +33,6 @@ impl FromStr for Algorithm {
         match s.to_lowercase().as_str() {
             "argon2id" | "argon2" => Ok(Self::Argon2id),
             "bcrypt" | "2b" | "2a" | "2y" => Ok(Self::Bcrypt),
-            "pbkdf2-sha256" | "pbkdf2" => Ok(Self::Pbkdf2Sha256),
             "noop" | "plaintext" => Ok(Self::Noop),
             _ => Err(PasswordError::UnsupportedAlgorithm(s.to_string())),
         }
@@ -80,8 +76,6 @@ impl PasswordHash {
             || hash.starts_with("$bcrypt$")
         {
             Ok(Algorithm::Bcrypt)
-        } else if hash.starts_with("$pbkdf2-sha256$") || hash.starts_with("$pbkdf2$") {
-            Ok(Algorithm::Pbkdf2Sha256)
         } else if hash.starts_with("$noop$") {
             Ok(Algorithm::Noop)
         } else {
