@@ -25,8 +25,11 @@ DCB is an architectural pattern for event-sourced systems that decouples consist
 
 ## Strongly-Typed Domain Event Usage
 
+> Requires the `memory` feature: `event-sourcing = { version = "0.0.0", features = ["memory"] }`
+
 ```rust
-use event_sourcing::{DomainEvent, EventStore, EventType, InMemoryEventStore, Tag};
+use event_sourcing::{DomainEvent, EventStore, EventType, Tag};
+use event_sourcing::memory::InMemoryEventStore;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

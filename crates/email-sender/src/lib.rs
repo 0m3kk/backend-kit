@@ -1,9 +1,11 @@
 pub mod errors;
-pub mod traits;
+#[cfg(feature = "memory")]
+pub mod memory;
+pub mod sender;
 pub mod types;
 
 pub use errors::EmailError;
-pub use traits::EmailSender;
+pub use sender::EmailSender;
 pub use types::{Attachment, Email, EmailAddress, EmailBuilder, EmailResponse};
 
 #[cfg(test)]

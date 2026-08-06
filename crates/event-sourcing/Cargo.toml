@@ -3,6 +3,9 @@ name = "event-sourcing"
 version = "0.0.0"
 edition = "2024"
 
+[features]
+memory = []
+
 [dependencies]
 async-trait = "0.1"
 futures-util = "0.3"
@@ -13,6 +16,10 @@ thiserror = "2.0"
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[[test]]
+name = "memory_store_tests"
+required-features = ["memory"]
 
 [lints]
 workspace = true

@@ -1,5 +1,5 @@
+use event_sourcing::memory::InMemoryEventStore;
 use event_sourcing::*;
-use event_store_memory::InMemoryEventStore;
 use futures_util::StreamExt;
 
 #[tokio::test]
@@ -245,7 +245,6 @@ async fn test_append_condition_success() {
     let appended1 = store.append(vec![e1], None).await.unwrap();
     let pos1 = appended1[0].position;
 
-    // Append condition: fail if username john appears after pos1 (pos 1)
     let query = Query::item(QueryItem::new().with_tag("username:john"));
     let condition = AppendCondition::new(query).after(pos1);
 
@@ -273,7 +272,6 @@ async fn test_append_condition_conflict_failure() {
     let appended1 = store.append(vec![e1], None).await.unwrap();
     let pos1 = appended1[0].position;
 
-    // Concurrent writer appends another event for username:john at pos 2
     let e2 = Event::new(
         "e2",
         "UsernameClaimed",
@@ -282,7 +280,6 @@ async fn test_append_condition_conflict_failure() {
     );
     store.append(vec![e2], None).await.unwrap();
 
-    // Client unaware of pos 2 tries to append with condition requiring no username:john after pos 1
     let query = Query::item(QueryItem::new().with_tag("username:john"));
     let condition = AppendCondition::new(query).after(pos1);
 
@@ -318,7 +315,6 @@ async fn test_append_condition_without_after_checks_all_events() {
     );
     store.append(vec![e1], None).await.unwrap();
 
-    // Condition with after = None fails if ANY event matching lock:resource-x exists
     let query = Query::item(QueryItem::new().with_tag("lock:resource-x"));
     let condition = AppendCondition::new(query);
 
@@ -337,7 +333,6 @@ async fn test_append_condition_without_after_checks_all_events() {
 async fn test_multi_tag_partitioning_concurrency() {
     let store = InMemoryEventStore::new();
 
-    // Alice claims username alice
     let e_alice = Event::new(
         "e1",
         "UsernameClaimed",
@@ -346,7 +341,6 @@ async fn test_multi_tag_partitioning_concurrency() {
     );
     let pos_alice = store.append(vec![e_alice], None).await.unwrap()[0].position;
 
-    // Bob claims username bob (different tag boundary)
     let query_bob = Query::item(QueryItem::new().with_tag("username:bob"));
     let condition_bob = AppendCondition::new(query_bob).after(pos_alice);
 
@@ -357,7 +351,6 @@ async fn test_multi_tag_partitioning_concurrency() {
         vec![Tag::key_value("username", "bob")],
     );
 
-    // Appending Bob does not conflict with Alice's prior event
     assert!(store.append(vec![e_bob], Some(condition_bob)).await.is_ok());
 }
 
@@ -371,7 +364,6 @@ async fn test_stream_spawn_tokio_task() {
     let query_all = Query::all();
     let mut stream = store.read(&query_all, ReadOptions::new()).await;
 
-    // Verify stream can be spawned onto a Tokio background task
     let handle = tokio::spawn(async move {
         let mut count = 0;
         while let Some(res) = stream.next().await {

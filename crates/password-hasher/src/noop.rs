@@ -1,7 +1,12 @@
-pub use password_hasher::*;
-
 #[cfg(feature = "async")]
 use async_trait::async_trait;
+
+use crate::errors::PasswordError;
+use crate::hasher::PasswordHasher;
+use crate::types::{Algorithm, PasswordHash};
+
+#[cfg(feature = "async")]
+use crate::hasher::AsyncPasswordHasher;
 
 /// No-op / Plaintext password hasher implementation for unit testing and benchmarking.
 ///

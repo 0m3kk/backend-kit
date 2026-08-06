@@ -3,7 +3,8 @@ use futures_util::stream::{self, StreamExt};
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub use event_sourcing::*;
+use crate::store::{AppendError, EventStream};
+use crate::types::*;
 
 /// An in-memory, thread-safe implementation of an Event Store compliant with the DCB specification.
 #[derive(Debug, Default)]
@@ -31,13 +32,14 @@ impl InMemoryEventStore {
 }
 
 #[async_trait]
-impl EventStore for InMemoryEventStore {
+impl super::EventStore for InMemoryEventStore {
     async fn read(&self, query: &Query, options: ReadOptions) -> EventStream {
         let events_guard = match self.events.read() {
             Ok(guard) => guard,
             Err(e) => {
                 let err_msg = e.to_string();
-                return stream::once(async move { Err(ReadError::StoreError(err_msg)) }).boxed();
+                return stream::once(async move { Err(super::ReadError::StoreError(err_msg)) })
+                    .boxed();
             }
         };
 

@@ -5,9 +5,11 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use futures_util::stream;
-
-use kv_store::{BatchOp, Key, KvEntry, KvError, KvStore, KvStream, ScanOptions, SetOptions, Value};
 use tokio::sync::RwLock;
+
+use crate::errors::KvError;
+use crate::store::{KvStore, KvStream};
+use crate::types::{BatchOp, Key, KvEntry, ScanOptions, SetOptions, Value};
 
 #[derive(Debug, Clone)]
 struct MemoryEntry {

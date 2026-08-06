@@ -1,21 +1,19 @@
 use std::time::Duration;
 
+use secret_store::memory::MemorySecretStore;
 use secret_store::{
     CipherAlgorithm, KEY_LEN, KeyRing, ListSecretOptions, MasterKey, SecretError, SecretPath,
     SecretStore, SecretValue, SetSecretOptions,
 };
-use secret_store_memory::MemorySecretStore;
 
 #[tokio::test]
-async fn test_memory_secret_store_crud() -> Result<(), SecretError> {
+async fn test_crud() -> Result<(), SecretError> {
     let store = MemorySecretStore::with_master_key([42u8; KEY_LEN])?;
     let path = SecretPath::new("app/database/password")?;
     let val = SecretValue::from("p@ssword123");
 
-    // Get non-existent
     assert!(store.get(&path).await?.is_none());
 
-    // Set
     let created = store
         .set(
             path.clone(),
@@ -26,7 +24,6 @@ async fn test_memory_secret_store_crud() -> Result<(), SecretError> {
     assert_eq!(created.version, 1);
     assert_eq!(created.tags.get("env"), Some(&"prod".to_string()));
 
-    // Get latest
     let fetched = store
         .get(&path)
         .await?
@@ -34,14 +31,12 @@ async fn test_memory_secret_store_crud() -> Result<(), SecretError> {
     assert_eq!(fetched.version, 1);
     assert_eq!(fetched.value.as_str()?, "p@ssword123");
 
-    // Update to v2
     let val2 = SecretValue::from("new_p@ssword456");
     let v2_created = store
         .set(path.clone(), val2, SetSecretOptions::new())
         .await?;
     assert_eq!(v2_created.version, 2);
 
-    // Get v1 & v2 explicitly
     let v1_entry = store
         .get_version(&path, 1)
         .await?
@@ -54,14 +49,13 @@ async fn test_memory_secret_store_crud() -> Result<(), SecretError> {
         .ok_or_else(|| SecretError::StoreError("NotFound".to_string()))?;
     assert_eq!(v2_entry.value.as_str()?, "new_p@ssword456");
 
-    // Delete
     assert!(store.delete(&path).await?);
     assert!(store.get(&path).await?.is_none());
     Ok(())
 }
 
 #[tokio::test]
-async fn test_memory_secret_store_list_and_filter() -> Result<(), SecretError> {
+async fn test_list_and_filter() -> Result<(), SecretError> {
     let store = MemorySecretStore::with_master_key([1u8; KEY_LEN])?;
 
     store
@@ -100,7 +94,7 @@ async fn test_memory_secret_store_list_and_filter() -> Result<(), SecretError> {
 }
 
 #[tokio::test]
-async fn test_memory_key_rotation() -> Result<(), SecretError> {
+async fn test_key_rotation() -> Result<(), SecretError> {
     let k1 = MasterKey::new(1, [10u8; KEY_LEN]);
     let keyring = KeyRing::new([k1])?;
 
@@ -115,15 +109,12 @@ async fn test_memory_key_rotation() -> Result<(), SecretError> {
         )
         .await?;
 
-    // Add version 2 master key to KeyRing
     let k2 = MasterKey::new(2, [20u8; KEY_LEN]);
     store.add_master_key(k2).await?;
 
-    // Rotate keys: re-wraps DEKs under version 2
     let re_encrypted_count = store.rotate_key().await?;
     assert_eq!(re_encrypted_count, 1);
 
-    // Verify secret can still be retrieved and decrypted seamlessly
     let secret = store
         .get(&path)
         .await?
@@ -134,7 +125,7 @@ async fn test_memory_key_rotation() -> Result<(), SecretError> {
 }
 
 #[tokio::test]
-async fn test_memory_expiration() -> Result<(), SecretError> {
+async fn test_expiration() -> Result<(), SecretError> {
     let store = MemorySecretStore::with_master_key([99u8; KEY_LEN])?;
     let active_path = SecretPath::new("temp/active_key")?;
 

@@ -3,6 +3,9 @@ name = "secret-store"
 version = "0.0.0"
 edition = "2024"
 
+[features]
+memory = ["dep:tokio"]
+
 [dependencies]
 aes-gcm = "0.11"
 async-trait = "0.1"
@@ -11,10 +14,15 @@ rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
+tokio = { version = "1.53", features = ["sync"], optional = true }
 zeroize = { version = "1.9", features = ["zeroize_derive"] }
 
 [dev-dependencies]
-tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "memory_store_tests"
+required-features = ["memory"]
 
 [lints]
 workspace = true

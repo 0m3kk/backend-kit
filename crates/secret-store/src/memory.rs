@@ -5,10 +5,12 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use secret_store::{
-    CipherAlgorithm, EncryptedPayload, KEY_LEN, KeyRing, ListSecretOptions, MasterKey,
-    SecretCrypto, SecretEntry, SecretError, SecretHeader, SecretPath, SecretStore, SecretValue,
-    SetSecretOptions,
+use crate::crypto::{KEY_LEN, KeyRing, MasterKey, SecretCrypto};
+use crate::errors::SecretError;
+use crate::store::SecretStore;
+use crate::types::{
+    CipherAlgorithm, EncryptedPayload, ListSecretOptions, SecretEntry, SecretHeader, SecretPath,
+    SecretValue, SetSecretOptions,
 };
 
 #[derive(Debug, Clone)]

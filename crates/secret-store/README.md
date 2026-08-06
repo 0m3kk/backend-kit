@@ -2,6 +2,12 @@
 
 Core specification, cryptographic primitives, envelope encryption, and `SecretStore` trait for backend-kit.
 
+## Feature Flags
+
+| Feature  | Description                                                           | Default |
+| :------- | :-------------------------------------------------------------------- | :------ |
+| `memory` | In-memory `MemorySecretStore` with envelope encryption & key rotation | No      |
+
 ## Features
 
 - **Envelope Encryption (DEK + KEK)**: Every secret payload is sealed under a fresh random Data Encryption Key (DEK). Each DEK is wrapped under a versioned Master Key (KEK) from a `KeyRing`.
@@ -19,7 +25,7 @@ use std::time::Duration;
 use secret_store::{
     CipherAlgorithm, KeyRing, MasterKey, SecretPath, SecretStore, SecretValue, SetSecretOptions, KEY_LEN,
 };
-use secret_store_memory::MemorySecretStore;
+use secret_store::memory::MemorySecretStore;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

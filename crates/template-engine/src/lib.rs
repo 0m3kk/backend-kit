@@ -1,10 +1,10 @@
 pub mod context;
+pub mod engine;
 pub mod errors;
-pub mod traits;
 
 pub use context::TemplateContext;
+pub use engine::TemplateEngine;
 pub use errors::TemplateError;
-pub use traits::TemplateEngine;
 
 #[cfg(test)]
 mod tests {
