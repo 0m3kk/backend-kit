@@ -12,7 +12,7 @@ pub struct CatchupWorker<C, ES, CP>
 where
     C: Send + Sync + 'static,
     ES: EventStore,
-    CP: CheckpointStore,
+    CP: CheckpointStore<C>,
 {
     ctx: C,
     event_store: ES,
@@ -24,7 +24,7 @@ impl<C, ES, CP> CatchupWorker<C, ES, CP>
 where
     C: Send + Sync + 'static,
     ES: EventStore,
-    CP: CheckpointStore,
+    CP: CheckpointStore<C>,
 {
     pub fn new(ctx: C, event_store: ES, checkpoint_store: CP) -> Self {
         Self {
@@ -33,6 +33,11 @@ where
             checkpoint_store,
             views: Vec::new(),
         }
+    }
+
+    /// Access reference to the underlying storage context.
+    pub fn context(&self) -> &C {
+        &self.ctx
     }
 
     /// Register a view instance `view: impl View<C>` to be caught up by this worker.
@@ -60,7 +65,7 @@ where
         let view_name = view.view_name();
         let current_pos = self
             .checkpoint_store
-            .get_position(view_name)
+            .get_position(&self.ctx, view_name)
             .await
             .map_err(|e| {
                 error!(view_name = view_name, error = %e, "Failed to read checkpoint position");
@@ -107,7 +112,7 @@ where
                 if let (Some(last_pos), true) = (last_successful_pos, count > 0) {
                     let _ = self
                         .checkpoint_store
-                        .save_position(view_name, last_pos)
+                        .save_position(&self.ctx, view_name, last_pos)
                         .await;
                 }
                 return Err(err);
@@ -119,7 +124,7 @@ where
 
         if let (Some(pos), true) = (last_successful_pos, count > 0) {
             self.checkpoint_store
-                .save_position(view_name, pos)
+                .save_position(&self.ctx, view_name, pos)
                 .await
                 .map_err(|e: CheckpointError| {
                     error!(view_name = view_name, position = %pos, error = %e, "Failed to save checkpoint position");

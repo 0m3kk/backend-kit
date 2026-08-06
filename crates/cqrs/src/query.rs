@@ -1,6 +1,7 @@
 use event_sourcing::{Direction, EventStore, ReadOptions, SequencePosition};
 use futures_util::StreamExt;
 use std::fmt::Debug;
+use tracing::{debug, error, info};
 
 use crate::view::{View, ViewError};
 use crate::view_checkpoint::{CheckpointError, CheckpointStore};
@@ -21,7 +22,7 @@ where
     V: View<C>,
     C: Send + Sync + 'static,
     ES: EventStore,
-    CP: CheckpointStore,
+    CP: CheckpointStore<C>,
 {
     view: V,
     ctx: C,
@@ -34,7 +35,7 @@ where
     V: View<C>,
     C: Send + Sync + 'static,
     ES: EventStore,
-    CP: CheckpointStore,
+    CP: CheckpointStore<C>,
 {
     pub fn new(view: V, ctx: C, event_store: ES, checkpoint_store: CP) -> Self {
         Self {
@@ -57,11 +58,15 @@ where
 
     /// Catch up the view projection synchronously to the latest event currently stored in the Event Store.
     pub async fn catchup(&self) -> Result<Option<SequencePosition>, ViewError> {
+        let view_name = self.view.view_name();
         let mut current_pos = self
             .checkpoint_store
-            .get_position(self.view.view_name())
+            .get_position(&self.ctx, view_name)
             .await
-            .map_err(|e| ViewError::Execution(e.to_string()))?;
+            .map_err(|e| {
+                error!(view_name = view_name, error = %e, "ViewQueryEngine failed to read checkpoint position");
+                ViewError::Execution(e.to_string())
+            })?;
 
         let query = self.view.subscription_query();
 
@@ -74,7 +79,10 @@ where
         let mut count = 0;
 
         while let Some(event_res) = stream.next().await {
-            let event = event_res.map_err(|e| ViewError::Execution(e.to_string()))?;
+            let event = event_res.map_err(|e| {
+                error!(view_name = view_name, error = %e, "ViewQueryEngine failed to read event from EventStore");
+                ViewError::Execution(e.to_string())
+            })?;
             current_pos = Some(event.position);
             self.view.apply_event(&event, &self.ctx).await?;
             count += 1;
@@ -82,9 +90,19 @@ where
 
         if let (Some(pos), true) = (current_pos, count > 0) {
             self.checkpoint_store
-                .save_position(self.view.view_name(), pos)
+                .save_position(&self.ctx, view_name, pos)
                 .await
-                .map_err(|e: CheckpointError| ViewError::Execution(e.to_string()))?;
+                .map_err(|e: CheckpointError| {
+                    error!(view_name = view_name, position = %pos, error = %e, "ViewQueryEngine failed to save checkpoint position");
+                    ViewError::Execution(e.to_string())
+                })?;
+
+            info!(
+                view_name = view_name,
+                processed_count = count,
+                new_position = %pos,
+                "ViewQueryEngine caught up view to latest event position"
+            );
         }
 
         Ok(current_pos)
@@ -95,6 +113,12 @@ where
     where
         F: FnOnce(&C) -> Result<R, ViewError>,
     {
+        debug!(
+            view_name = self.view.view_name(),
+            consistency = ?consistency,
+            "Executing ViewQueryEngine query"
+        );
+
         match consistency {
             ReadConsistency::Eventual => {}
             ReadConsistency::Strong => {

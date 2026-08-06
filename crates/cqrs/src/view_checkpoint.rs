@@ -14,23 +14,33 @@ pub enum CheckpointError {
 }
 
 /// Abstract storage interface for tracking projection progress positions for views.
+///
+/// ### Storage Context (`C`)
+/// Parameterized by storage context `C` (`CheckpointStore<C>`) to allow saving checkpoints
+/// within the same database transaction context `ctx` (`&C`) as your view table mutations.
+///
+/// When using non-transactional global KV stores (such as Redis or Redb), `C` defaults to `()`.
 #[async_trait]
-pub trait CheckpointStore: Send + Sync {
-    /// Retrieve the last processed position for a view table name.
+pub trait CheckpointStore<C = ()>: Send + Sync {
+    /// Retrieve the last processed position for a view table name using context `ctx` (`&C`).
     async fn get_position(
         &self,
+        ctx: &C,
         view_name: &str,
     ) -> Result<Option<SequencePosition>, CheckpointError>;
 
-    /// Save the newly committed position for a view table name.
+    /// Save the newly committed position for a view table name using context `ctx` (`&C`).
     async fn save_position(
         &self,
+        ctx: &C,
         view_name: &str,
         position: SequencePosition,
     ) -> Result<(), CheckpointError>;
 }
 
-/// Adapter allowing any [`KvStore`] from `kv-store` to be used as a [`CheckpointStore`].
+/// Adapter allowing any [`KvStore`] from `kv-store` to be used as a [`CheckpointStore<C>`].
+///
+/// Ignores storage context `_ctx` and persists checkpoints using the underlying [`KvStore`].
 pub struct KvCheckpointStore<K: KvStore> {
     store: K,
     key_prefix: String,
@@ -54,11 +64,8 @@ impl<K: KvStore> KvCheckpointStore<K> {
     fn make_key(&self, view_name: &str) -> Key {
         Key::new(format!("{}{}", self.key_prefix, view_name))
     }
-}
 
-#[async_trait]
-impl<K: KvStore> CheckpointStore for KvCheckpointStore<K> {
-    async fn get_position(
+    async fn get_internal(
         &self,
         view_name: &str,
     ) -> Result<Option<SequencePosition>, CheckpointError> {
@@ -82,7 +89,7 @@ impl<K: KvStore> CheckpointStore for KvCheckpointStore<K> {
         }
     }
 
-    async fn save_position(
+    async fn save_internal(
         &self,
         view_name: &str,
         position: SequencePosition,
@@ -93,5 +100,25 @@ impl<K: KvStore> CheckpointStore for KvCheckpointStore<K> {
             .set(key, value, SetOptions::default())
             .await
             .map_err(|e| CheckpointError::Store(e.to_string()))
+    }
+}
+
+#[async_trait]
+impl<K: KvStore, C: Send + Sync> CheckpointStore<C> for KvCheckpointStore<K> {
+    async fn get_position(
+        &self,
+        _ctx: &C,
+        view_name: &str,
+    ) -> Result<Option<SequencePosition>, CheckpointError> {
+        self.get_internal(view_name).await
+    }
+
+    async fn save_position(
+        &self,
+        _ctx: &C,
+        view_name: &str,
+        position: SequencePosition,
+    ) -> Result<(), CheckpointError> {
+        self.save_internal(view_name, position).await
     }
 }

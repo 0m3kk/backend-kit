@@ -360,7 +360,7 @@ async fn test_worker_error_resilience_and_checkpoint_preservation() {
     assert!(result.is_err());
 
     let checkpoint = KvCheckpointStore::new(kv_store)
-        .get_position("resilient_view")
+        .get_position(&db, "resilient_view")
         .await
         .unwrap();
     assert_eq!(checkpoint, Some(event_sourcing::SequencePosition::new(2)));

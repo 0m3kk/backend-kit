@@ -17,7 +17,16 @@ pub enum ViewError {
 
 /// Unified trait representing a read model (view table) and its event projection logic.
 ///
-/// `C` is the arbitrary storage context or database connection (e.g. `&PgPool`, `&Transaction`, `&KvStore`).
+/// ### Storage Context (`C`)
+/// `C` represents the storage context or database handle used to mutate view tables.
+/// It is completely unopinionated and can be any database handle or transaction type, such as:
+/// - `&PgPool` or `&mut Transaction<'_, Postgres>` (SQLx / PostgreSQL)
+/// - `&DatabaseConnection` or `&DatabaseTransaction` (SeaORM)
+/// - `&RedisClient` or `&KvStore`
+/// - `()` (no storage context needed)
+///
+/// Passing a database transaction `&mut Transaction` as `C` enables 100% atomic projections where
+/// view table mutations and checkpoint position updates commit together in a single transaction.
 #[async_trait]
 pub trait View<C = ()>: Send + Sync + 'static {
     /// Name of the view table or read model collection.
@@ -28,6 +37,9 @@ pub trait View<C = ()>: Send + Sync + 'static {
         EventQuery::all()
     }
 
-    /// Projects an incoming domain event using storage context `C`.
+    /// Projects an incoming domain event using storage context `ctx` (`&C`).
+    ///
+    /// The `ctx` parameter provides direct access to your database pool, connection, or transaction
+    /// to perform SQL queries or storage updates.
     async fn apply_event(&self, event: &SequencedEvent, ctx: &C) -> Result<(), ViewError>;
 }

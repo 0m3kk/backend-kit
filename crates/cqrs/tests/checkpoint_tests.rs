@@ -9,20 +9,20 @@ async fn test_kv_checkpoint_store_basic_persistence() {
 
     assert_eq!(
         checkpoint_store
-            .get_position("user_profiles")
+            .get_position(&(), "user_profiles")
             .await
             .unwrap(),
         None
     );
 
     checkpoint_store
-        .save_position("user_profiles", SequencePosition::new(42))
+        .save_position(&(), "user_profiles", SequencePosition::new(42))
         .await
         .unwrap();
 
     assert_eq!(
         checkpoint_store
-            .get_position("user_profiles")
+            .get_position(&(), "user_profiles")
             .await
             .unwrap(),
         Some(SequencePosition::new(42))
@@ -36,20 +36,20 @@ async fn test_kv_checkpoint_store_custom_prefix() {
 
     assert_eq!(
         checkpoint_store
-            .get_position("user_profiles")
+            .get_position(&(), "user_profiles")
             .await
             .unwrap(),
         None
     );
 
     checkpoint_store
-        .save_position("user_profiles", SequencePosition::new(100))
+        .save_position(&(), "user_profiles", SequencePosition::new(100))
         .await
         .unwrap();
 
     assert_eq!(
         checkpoint_store
-            .get_position("user_profiles")
+            .get_position(&(), "user_profiles")
             .await
             .unwrap(),
         Some(SequencePosition::new(100))
