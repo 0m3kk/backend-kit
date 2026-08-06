@@ -65,17 +65,13 @@ redis-down: ## Stop Redis server container
 	container stop redis-test || true
 
 crate-add-lib: ## Add library crate (usage: make crate-add-lib xxx)
-	cargo workspaces create --lib crates/$(word 2, $(MAKECMDGOALS))
-	@echo "" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml
-	@echo "[lints]" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml
-	@echo "workspace = true" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml
+	cargo new --lib --edition 2024 crates/$(word 2, $(MAKECMDGOALS))
+	@grep -q "\[lints\]" crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml || (echo "" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml && echo "[lints]" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml && echo "workspace = true" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml)
 	$(MAKE) sort
 
 crate-add-bin: ## Add binary crate (usage: make crate-add-bin xxx)
-	cargo workspaces create --bin crates/$(word 2, $(MAKECMDGOALS))
-	@echo "" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml
-	@echo "[lints]" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml
-	@echo "workspace = true" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml
+	cargo new --bin --edition 2024 crates/$(word 2, $(MAKECMDGOALS))
+	@grep -q "\[lints\]" crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml || (echo "" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml && echo "[lints]" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml && echo "workspace = true" >> crates/$(word 2, $(MAKECMDGOALS))/Cargo.toml)
 	$(MAKE) sort
 
 crate-remove: ## Remove crate (usage: make crate-remove xxx)
