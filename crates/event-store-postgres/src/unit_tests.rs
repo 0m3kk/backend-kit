@@ -21,21 +21,15 @@ mod tests {
             .connect_lazy("postgres://postgres:postgres@localhost:5432/test_db")
             .unwrap();
 
-        let store = PostgresEventStore::new(pool.clone());
-        assert_eq!(store.table_name, "events");
-        assert_eq!(store.chunk_size, DEFAULT_INSERT_CHUNK_SIZE);
-        assert_eq!(store.max_append_attempts, DEFAULT_MAX_APPEND_ATTEMPTS);
-
-        let custom_store = PostgresEventStore::with_table(pool, "custom_events_table")
+        let store = PostgresEventStore::new(pool)
             .with_chunk_size(500)
             .with_max_append_attempts(10);
 
-        assert_eq!(custom_store.table_name, "custom_events_table");
-        assert_eq!(custom_store.chunk_size, 500);
-        assert_eq!(custom_store.max_append_attempts, 10);
+        assert_eq!(store.chunk_size, 500);
+        assert_eq!(store.max_append_attempts, 10);
 
         // Clamping check for 0 values
-        let clamped_store = custom_store.with_chunk_size(0).with_max_append_attempts(0);
+        let clamped_store = store.with_chunk_size(0).with_max_append_attempts(0);
 
         assert_eq!(clamped_store.chunk_size, 1);
         assert_eq!(clamped_store.max_append_attempts, 1);

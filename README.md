@@ -10,6 +10,11 @@ A collection of foundational Rust backend libraries and components.
 | **`event-store-memory`**   | [`crates/event-store-memory`](crates/event-store-memory/README.md)     | In-memory `EventStore` implementation for local development and testing                                                               |
 | **`event-store-postgres`** | [`crates/event-store-postgres`](crates/event-store-postgres/README.md) | PostgreSQL `EventStore` implementation using GIN array indexing and atomic transactions                                               |
 | **`event-store-umadb`**    | [`crates/event-store-umadb`](crates/event-store-umadb/README.md)       | UmaDB gRPC `EventStore` implementation for Dynamic Consistency Boundaries ([umadb.io](https://umadb.io))                              |
+| **`kv-store`**             | [`crates/kv-store`](crates/kv-store/README.md)                         | Core Key-Value Store specification, types & `KvStore` trait                                                                           |
+| **`kv-store-memory`**      | [`crates/kv-store-memory`](crates/kv-store-memory/README.md)           | In-memory concurrent `KvStore` implementation with TTL & range scanning                                                               |
+| **`kv-store-postgres`**    | [`crates/kv-store-postgres`](crates/kv-store-postgres/README.md)       | PostgreSQL `KvStore` implementation using `sqlx` and atomic transactions                                                              |
+| **`kv-store-redb`**        | [`crates/kv-store-redb`](crates/kv-store-redb/README.md)               | Embedded persistent `KvStore` implementation backed by `redb` ACID storage engine                                                     |
+| **`kv-store-redis`**       | [`crates/kv-store-redis`](crates/kv-store-redis/README.md)             | Redis `KvStore` implementation using `redis-rs` async connection manager                                                              |
 
 ---
 

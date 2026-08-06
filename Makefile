@@ -1,10 +1,12 @@
 USER ?= $(shell whoami)
 DATABASE_URL ?= postgres://$(USER)@localhost:5432/postgres
 UMADB_URL ?= http://127.0.0.1:50051
+REDIS_URL ?= redis://127.0.0.1:6379
 export DATABASE_URL
 export UMADB_URL
+export REDIS_URL
 
-.PHONY: install-tools check lint fmt fmt-check test sort upgrade upgrade-latest remove-unused sql-fmt prettier crate-add-lib crate-add-bin crate-remove umadb-up umadb-down help
+.PHONY: install-tools check lint fmt fmt-check test sort upgrade upgrade-latest remove-unused sql-fmt prettier crate-add-lib crate-add-bin crate-remove umadb-up umadb-down redis-up redis-down help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -55,6 +57,12 @@ umadb-up: ## Start UmaDB server in container
 
 umadb-down: ## Stop UmaDB server container
 	container stop umadb-test || true
+
+redis-up: ## Start Redis server in container
+	container run -d --name redis-test --rm -p 6379:6379 redis:latest
+
+redis-down: ## Stop Redis server container
+	container stop redis-test || true
 
 crate-add-lib: ## Add library crate (usage: make crate-add-lib xxx)
 	cargo workspaces create --lib crates/$(word 2, $(MAKECMDGOALS))

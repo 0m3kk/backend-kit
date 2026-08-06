@@ -43,7 +43,6 @@ impl From<EventRow> for SequencedEvent {
 #[derive(Debug, Clone)]
 pub struct PostgresEventStore {
     pool: PgPool,
-    table_name: String,
     max_append_attempts: u32,
     chunk_size: usize,
 }
@@ -53,17 +52,6 @@ impl PostgresEventStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
-            table_name: "events".to_string(),
-            max_append_attempts: DEFAULT_MAX_APPEND_ATTEMPTS,
-            chunk_size: DEFAULT_INSERT_CHUNK_SIZE,
-        }
-    }
-
-    /// Creates a store with a custom table name.
-    pub fn with_table(pool: PgPool, table_name: impl Into<String>) -> Self {
-        Self {
-            pool,
-            table_name: table_name.into(),
             max_append_attempts: DEFAULT_MAX_APPEND_ATTEMPTS,
             chunk_size: DEFAULT_INSERT_CHUNK_SIZE,
         }
@@ -105,24 +93,15 @@ impl PostgresEventStore {
 
         // 1. Enforce AppendCondition if specified
         if let Some(cond) = condition
-            && has_conflict(
-                &mut tx,
-                &self.table_name,
-                &cond.fail_if_events_match,
-                cond.after,
-            )
-            .await
-            .map_err(|e| AppendError::StoreError(e.to_string()))?
+            && has_conflict(&mut tx, &cond.fail_if_events_match, cond.after)
+                .await
+                .map_err(|e| AppendError::StoreError(e.to_string()))?
         {
             // Fetch conflicting event details for error reporting
-            let conflicting_event = fetch_conflicting_event(
-                &mut tx,
-                &self.table_name,
-                &cond.fail_if_events_match,
-                cond.after,
-            )
-            .await
-            .map_err(|e| AppendError::StoreError(e.to_string()))?;
+            let conflicting_event =
+                fetch_conflicting_event(&mut tx, &cond.fail_if_events_match, cond.after)
+                    .await
+                    .map_err(|e| AppendError::StoreError(e.to_string()))?;
 
             return Err(AppendError::Conflict {
                 condition: cond.clone(),
@@ -140,10 +119,9 @@ impl PostgresEventStore {
         let mut appended = Vec::with_capacity(total_events);
 
         for chunk in events.chunks(self.chunk_size) {
-            let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
-                "INSERT INTO {} (id, event_type, data, tags, metadata, timestamp) ",
-                self.table_name
-            ));
+            let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+                "INSERT INTO events (id, event_type, data, tags, metadata, timestamp) ",
+            );
 
             qb.push_values(chunk, |mut b, event| {
                 let tags: Vec<String> = event.tags.iter().map(|t| t.0.clone()).collect();
@@ -184,10 +162,9 @@ impl PostgresEventStore {
 #[async_trait]
 impl EventStore for PostgresEventStore {
     async fn read(&self, query: &Query, options: ReadOptions) -> EventStream {
-        let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
-            "SELECT id, position, event_type, data, tags, metadata, timestamp FROM {}",
-            self.table_name
-        ));
+        let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+            "SELECT id, position, event_type, data, tags, metadata, timestamp FROM events",
+        );
 
         let has_where = push_query_filter(&mut qb, query);
         if let Some(after) = options.after {
@@ -309,12 +286,11 @@ fn push_item<'a>(qb: &mut QueryBuilder<'a, sqlx::Postgres>, item: &QueryItem) {
 /// Returns `true` if the store already contains an event matching `query` with position > `after`.
 async fn has_conflict(
     tx: &mut Transaction<'_, sqlx::Postgres>,
-    table_name: &str,
     query: &Query,
     after: Option<SequencePosition>,
 ) -> Result<bool, sqlx::Error> {
     let mut qb: QueryBuilder<sqlx::Postgres> =
-        QueryBuilder::new(format!("SELECT EXISTS(SELECT 1 FROM {}", table_name));
+        QueryBuilder::new("SELECT EXISTS(SELECT 1 FROM events");
 
     let has_where = push_query_filter(&mut qb, query);
     if let Some(after) = after {
@@ -330,14 +306,12 @@ async fn has_conflict(
 /// Fetches details of the conflicting event for error reporting.
 async fn fetch_conflicting_event(
     tx: &mut Transaction<'_, sqlx::Postgres>,
-    table_name: &str,
     query: &Query,
     after: Option<SequencePosition>,
 ) -> Result<SequencedEvent, sqlx::Error> {
-    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
-        "SELECT id, position, event_type, data, tags, metadata, timestamp FROM {}",
-        table_name
-    ));
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+        "SELECT id, position, event_type, data, tags, metadata, timestamp FROM events",
+    );
 
     let has_where = push_query_filter(&mut qb, query);
     if let Some(after) = after {
