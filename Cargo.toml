@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/email-sender",
+    "crates/email-sender-memory",
+    "crates/email-sender-resend",
+    "crates/email-sender-sendgrid",
+    "crates/email-sender-smtp",
     "crates/event-sourcing",
     "crates/event-store-memory",
     "crates/event-store-postgres",

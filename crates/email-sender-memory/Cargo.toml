@@ -1,0 +1,16 @@
+[package]
+name = "email-sender-memory"
+version = "0.1.0"
+edition = "2024"
+description = "In-memory mock implementation of EmailSender for unit testing and local development."
+
+[dependencies]
+async-trait = "0.1"
+email-sender = { path = "../email-sender" }
+tokio = { version = "1.53", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
