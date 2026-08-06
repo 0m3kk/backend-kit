@@ -15,9 +15,9 @@ A collection of foundational Rust backend libraries and components.
 | **`kv-store-postgres`**     | [`crates/kv-store-postgres`](crates/kv-store-postgres/README.md)         | PostgreSQL `KvStore` implementation using `sqlx` and atomic transactions                                                              |
 | **`kv-store-redb`**         | [`crates/kv-store-redb`](crates/kv-store-redb/README.md)                 | Embedded persistent `KvStore` implementation backed by `redb` ACID storage engine                                                     |
 | **`kv-store-redis`**        | [`crates/kv-store-redis`](crates/kv-store-redis/README.md)               | Redis `KvStore` implementation using `redis-rs` async connection manager                                                              |
-| **`secret-store`**          | [`crates/secret-store`](crates/secret-store/README.md)                   | Core Secret Store specification, types, cryptography (AES-GCM / ChaCha20Poly1305) & `SecretStore` trait                               |
-| **`secret-store-memory`**   | [`crates/secret-store-memory`](crates/secret-store-memory/README.md)     | In-memory concurrent `SecretStore` implementation with AEAD encryption, versioning, path hierarchy & key rotation                     |
-| **`secret-store-postgres`** | [`crates/secret-store-postgres`](crates/secret-store-postgres/README.md) | PostgreSQL `SecretStore` implementation using `sqlx`, JSONB tag indexing & transactional key rotation                                 |
+| **`secret-store`**          | [`crates/secret-store`](crates/secret-store/README.md)                   | Core Secret Store specification, Envelope Encryption (DEK + KEK), `KeyRing` & `SecretStore` trait                                     |
+| **`secret-store-memory`**   | [`crates/secret-store-memory`](crates/secret-store-memory/README.md)     | In-memory concurrent `SecretStore` implementation with Envelope Encryption, versioning, path hierarchy & `KeyRing` rotation           |
+| **`secret-store-postgres`** | [`crates/secret-store-postgres`](crates/secret-store-postgres/README.md) | PostgreSQL `SecretStore` implementation using `sqlx`, JSONB tag indexing & transactional DEK re-wrapping key rotation                 |
 
 ---
 
