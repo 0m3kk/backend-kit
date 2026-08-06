@@ -5,8 +5,14 @@ members = [
     "crates/event-store-memory",
     "crates/event-store-postgres",
     "crates/event-store-umadb",
+    "crates/kv-store",
+    "crates/kv-store-memory",
+    "crates/kv-store-postgres",
+    "crates/kv-store-redb",
+    "crates/kv-store-redis",
 ]
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
+
