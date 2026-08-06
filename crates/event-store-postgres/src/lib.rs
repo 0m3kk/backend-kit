@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use sqlx::{QueryBuilder, Transaction, postgres::PgPool};
+use sqlx::{QueryBuilder, postgres::PgPool};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub use event_sourcing::*;
@@ -91,15 +91,35 @@ impl PostgresEventStore {
             .await
             .map_err(|e| AppendError::StoreError(e.to_string()))?;
 
+        let result = self.append_tx(&mut tx, events, condition).await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppendError::StoreError(e.to_string()))?;
+
+        Ok(result)
+    }
+
+    /// Performs an append operation using a PostgreSQL connection or transaction handle.
+    pub async fn append_tx(
+        &self,
+        executor: &mut sqlx::PgConnection,
+        events: &[Event],
+        condition: Option<&AppendCondition>,
+    ) -> Result<Vec<SequencedEvent>, AppendError> {
+        if events.is_empty() {
+            return Err(AppendError::EmptyBatch);
+        }
+
         // 1. Enforce AppendCondition if specified
         if let Some(cond) = condition
-            && has_conflict(&mut tx, &cond.fail_if_events_match, cond.after)
+            && has_conflict(&mut *executor, &cond.fail_if_events_match, cond.after)
                 .await
                 .map_err(|e| AppendError::StoreError(e.to_string()))?
         {
             // Fetch conflicting event details for error reporting
             let conflicting_event =
-                fetch_conflicting_event(&mut tx, &cond.fail_if_events_match, cond.after)
+                fetch_conflicting_event(&mut *executor, &cond.fail_if_events_match, cond.after)
                     .await
                     .map_err(|e| AppendError::StoreError(e.to_string()))?;
 
@@ -137,7 +157,7 @@ impl PostgresEventStore {
 
             let chunk_positions = qb
                 .build_query_scalar::<i64>()
-                .fetch_all(&mut *tx)
+                .fetch_all(&mut *executor)
                 .await
                 .map_err(|e| AppendError::StoreError(e.to_string()))?;
 
@@ -151,11 +171,41 @@ impl PostgresEventStore {
             }
         }
 
-        tx.commit()
-            .await
-            .map_err(|e| AppendError::StoreError(e.to_string()))?;
-
         Ok(appended)
+    }
+
+    /// Reads events matching query using a PostgreSQL connection or transaction handle.
+    pub async fn read_tx(
+        &self,
+        executor: &mut sqlx::PgConnection,
+        query: &Query,
+        options: ReadOptions,
+    ) -> Result<Vec<SequencedEvent>, ReadError> {
+        let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+            "SELECT id, position, event_type, data, tags, metadata, timestamp FROM events",
+        );
+
+        let has_where = push_query_filter(&mut qb, query);
+        if let Some(after) = options.after {
+            push_position_bound(&mut qb, has_where, ">", after);
+        }
+
+        match options.direction {
+            Direction::Forward => qb.push(" ORDER BY position ASC"),
+            Direction::Backward => qb.push(" ORDER BY position DESC"),
+        };
+
+        if let Some(limit) = options.limit {
+            qb.push(" LIMIT ").push_bind(limit as i64);
+        }
+
+        let rows = qb
+            .build_query_as::<EventRow>()
+            .fetch_all(&mut *executor)
+            .await
+            .map_err(|e| ReadError::StoreError(e.to_string()))?;
+
+        Ok(rows.into_iter().map(SequencedEvent::from).collect())
     }
 }
 
@@ -285,7 +335,7 @@ fn push_item<'a>(qb: &mut QueryBuilder<'a, sqlx::Postgres>, item: &QueryItem) {
 
 /// Returns `true` if the store already contains an event matching `query` with position > `after`.
 async fn has_conflict(
-    tx: &mut Transaction<'_, sqlx::Postgres>,
+    conn: &mut sqlx::PgConnection,
     query: &Query,
     after: Option<SequencePosition>,
 ) -> Result<bool, sqlx::Error> {
@@ -299,13 +349,16 @@ async fn has_conflict(
 
     qb.push(")");
 
-    let exists: bool = qb.build_query_scalar::<bool>().fetch_one(&mut **tx).await?;
+    let exists: bool = qb
+        .build_query_scalar::<bool>()
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(exists)
 }
 
 /// Fetches details of the conflicting event for error reporting.
 async fn fetch_conflicting_event(
-    tx: &mut Transaction<'_, sqlx::Postgres>,
+    conn: &mut sqlx::PgConnection,
     query: &Query,
     after: Option<SequencePosition>,
 ) -> Result<SequencedEvent, sqlx::Error> {
@@ -320,7 +373,10 @@ async fn fetch_conflicting_event(
 
     qb.push(" ORDER BY position ASC LIMIT 1");
 
-    let row = qb.build_query_as::<EventRow>().fetch_one(&mut **tx).await?;
+    let row = qb
+        .build_query_as::<EventRow>()
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(SequencedEvent::from(row))
 }
 
