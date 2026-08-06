@@ -13,6 +13,7 @@ UmaDB implementation of the `EventStore` trait for [Dynamic Consistency Boundari
 ```rust
 use event_sourcing::{Event, EventStore, Query, ReadOptions};
 use event_store_umadb::UmaDBEventStore;
+use futures_util::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
