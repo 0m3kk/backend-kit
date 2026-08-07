@@ -80,3 +80,25 @@ impl<T: KvStore + ?Sized> KvStore for Arc<T> {
         (**self).clean_expired(limit).await
     }
 }
+
+/// KV store operations that can participate in an external transaction/connection.
+///
+/// `Conn` represents the connection or transaction handle type (e.g., `sqlx::PgConnection`).
+/// Implementors delegate to their internal transactional methods using the provided connection.
+#[async_trait]
+pub trait KvStoreTx<Conn: Send>: KvStore {
+    /// Retrieve a value by key using the provided connection handle.
+    async fn get_tx(&self, conn: &mut Conn, key: &Key) -> Result<Option<Value>, KvError>;
+
+    /// Set a key to a value with optional parameters using the provided connection handle.
+    async fn set_tx(
+        &self,
+        conn: &mut Conn,
+        key: Key,
+        value: Value,
+        options: SetOptions,
+    ) -> Result<(), KvError>;
+
+    /// Delete a key from the store using the provided connection handle.
+    async fn delete_tx(&self, conn: &mut Conn, key: &Key) -> Result<bool, KvError>;
+}

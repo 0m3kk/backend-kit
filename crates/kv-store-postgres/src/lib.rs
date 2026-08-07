@@ -4,7 +4,9 @@ use async_stream::stream;
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
-use kv_store::{BatchOp, Key, KvEntry, KvError, KvStore, KvStream, ScanOptions, SetOptions, Value};
+use kv_store::{
+    BatchOp, Key, KvEntry, KvError, KvStore, KvStoreTx, KvStream, ScanOptions, SetOptions, Value,
+};
 
 /// PostgreSQL backed Key-Value Store implementing the `KvStore` trait.
 #[derive(Clone, Debug)]
@@ -26,95 +28,31 @@ impl PostgresKvStore {
             .map_err(|e| KvError::StoreError(e.to_string()))
     }
 
-    /// Retrieve a value by key using a PostgreSQL connection or transaction handle.
-    pub async fn get_tx(
+    /// Atomically execute a batch of operations using a PostgreSQL connection or transaction handle.
+    pub async fn batch_tx(
         &self,
         executor: &mut sqlx::PgConnection,
-        key: &Key,
-    ) -> Result<Option<Value>, KvError> {
-        let row = sqlx::query(
-            "SELECT value FROM kv_entries WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())",
-        )
-        .bind(key.as_bytes())
-        .fetch_optional(&mut *executor)
-        .await
-        .map_err(|e| KvError::StoreError(e.to_string()))?;
-
-        if let Some(row) = row {
-            let val_bytes: Vec<u8> = row.get("value");
-            Ok(Some(Value::new(val_bytes)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Set a key to a value with optional parameters using a PostgreSQL connection or transaction handle.
-    pub async fn set_tx(
-        &self,
-        executor: &mut sqlx::PgConnection,
-        key: Key,
-        value: Value,
-        options: SetOptions,
+        ops: Vec<BatchOp>,
     ) -> Result<(), KvError> {
-        let ttl_secs = options.ttl.map(|d| d.as_secs_f64());
-
-        if options.if_not_exists {
-            let res = sqlx::query(
-                "INSERT INTO kv_entries (key, value, expires_at) VALUES ($1, $2, CASE WHEN $3::FLOAT IS NOT NULL THEN NOW() + ($3 || ' seconds')::INTERVAL ELSE NULL END) ON CONFLICT (key) DO NOTHING",
-            )
-            .bind(key.as_bytes())
-            .bind(value.as_bytes())
-            .bind(ttl_secs)
-            .execute(&mut *executor)
-            .await
-            .map_err(|e| KvError::StoreError(e.to_string()))?;
-
-            if res.rows_affected() == 0 {
-                return Err(KvError::ConditionFailed);
+        for op in ops {
+            match op {
+                BatchOp::Put {
+                    key,
+                    value,
+                    options,
+                } => {
+                    <Self as KvStoreTx<sqlx::PgConnection>>::set_tx(
+                        self, executor, key, value, options,
+                    )
+                    .await?;
+                }
+                BatchOp::Delete { key } => {
+                    <Self as KvStoreTx<sqlx::PgConnection>>::delete_tx(self, executor, &key)
+                        .await?;
+                }
             }
-        } else if options.if_exists {
-            let res = sqlx::query(
-                "UPDATE kv_entries SET value = $2, expires_at = CASE WHEN $3::FLOAT IS NOT NULL THEN NOW() + ($3 || ' seconds')::INTERVAL ELSE NULL END WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())",
-            )
-            .bind(key.as_bytes())
-            .bind(value.as_bytes())
-            .bind(ttl_secs)
-            .execute(&mut *executor)
-            .await
-            .map_err(|e| KvError::StoreError(e.to_string()))?;
-
-            if res.rows_affected() == 0 {
-                return Err(KvError::ConditionFailed);
-            }
-        } else {
-            sqlx::query(
-                "INSERT INTO kv_entries (key, value, expires_at) VALUES ($1, $2, CASE WHEN $3::FLOAT IS NOT NULL THEN NOW() + ($3 || ' seconds')::INTERVAL ELSE NULL END)
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at",
-            )
-            .bind(key.as_bytes())
-            .bind(value.as_bytes())
-            .bind(ttl_secs)
-            .execute(&mut *executor)
-            .await
-            .map_err(|e| KvError::StoreError(e.to_string()))?;
         }
-
         Ok(())
-    }
-
-    /// Delete a key from the store using a PostgreSQL connection or transaction handle.
-    pub async fn delete_tx(
-        &self,
-        executor: &mut sqlx::PgConnection,
-        key: &Key,
-    ) -> Result<bool, KvError> {
-        let res = sqlx::query("DELETE FROM kv_entries WHERE key = $1")
-            .bind(key.as_bytes())
-            .execute(&mut *executor)
-            .await
-            .map_err(|e| KvError::StoreError(e.to_string()))?;
-
-        Ok(res.rows_affected() > 0)
     }
 
     /// Check if a key exists using a PostgreSQL connection or transaction handle.
@@ -132,29 +70,6 @@ impl PostgresKvStore {
         .map_err(|e| KvError::StoreError(e.to_string()))?;
 
         Ok(row.is_some())
-    }
-
-    /// Atomically execute a batch of operations using a PostgreSQL connection or transaction handle.
-    pub async fn batch_tx(
-        &self,
-        executor: &mut sqlx::PgConnection,
-        ops: Vec<BatchOp>,
-    ) -> Result<(), KvError> {
-        for op in ops {
-            match op {
-                BatchOp::Put {
-                    key,
-                    value,
-                    options,
-                } => {
-                    self.set_tx(executor, key, value, options).await?;
-                }
-                BatchOp::Delete { key } => {
-                    self.delete_tx(executor, &key).await?;
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Retrieve the remaining TTL using a PostgreSQL connection or transaction handle.
@@ -208,6 +123,101 @@ impl PostgresKvStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// KvStoreTx<PgConnection> — the canonical transactional implementation
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl KvStoreTx<sqlx::PgConnection> for PostgresKvStore {
+    async fn get_tx(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        key: &Key,
+    ) -> Result<Option<Value>, KvError> {
+        let row = sqlx::query(
+            "SELECT value FROM kv_entries WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+        )
+        .bind(key.as_bytes())
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| KvError::StoreError(e.to_string()))?;
+
+        if let Some(row) = row {
+            let val_bytes: Vec<u8> = row.get("value");
+            Ok(Some(Value::new(val_bytes)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn set_tx(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        key: Key,
+        value: Value,
+        options: SetOptions,
+    ) -> Result<(), KvError> {
+        let ttl_secs = options.ttl.map(|d| d.as_secs_f64());
+
+        if options.if_not_exists {
+            let res = sqlx::query(
+                "INSERT INTO kv_entries (key, value, expires_at) VALUES ($1, $2, CASE WHEN $3::FLOAT IS NOT NULL THEN NOW() + ($3 || ' seconds')::INTERVAL ELSE NULL END) ON CONFLICT (key) DO NOTHING",
+            )
+            .bind(key.as_bytes())
+            .bind(value.as_bytes())
+            .bind(ttl_secs)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| KvError::StoreError(e.to_string()))?;
+
+            if res.rows_affected() == 0 {
+                return Err(KvError::ConditionFailed);
+            }
+        } else if options.if_exists {
+            let res = sqlx::query(
+                "UPDATE kv_entries SET value = $2, expires_at = CASE WHEN $3::FLOAT IS NOT NULL THEN NOW() + ($3 || ' seconds')::INTERVAL ELSE NULL END WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+            )
+            .bind(key.as_bytes())
+            .bind(value.as_bytes())
+            .bind(ttl_secs)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| KvError::StoreError(e.to_string()))?;
+
+            if res.rows_affected() == 0 {
+                return Err(KvError::ConditionFailed);
+            }
+        } else {
+            sqlx::query(
+                "INSERT INTO kv_entries (key, value, expires_at) VALUES ($1, $2, CASE WHEN $3::FLOAT IS NOT NULL THEN NOW() + ($3 || ' seconds')::INTERVAL ELSE NULL END)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at",
+            )
+            .bind(key.as_bytes())
+            .bind(value.as_bytes())
+            .bind(ttl_secs)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| KvError::StoreError(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    async fn delete_tx(&self, conn: &mut sqlx::PgConnection, key: &Key) -> Result<bool, KvError> {
+        let res = sqlx::query("DELETE FROM kv_entries WHERE key = $1")
+            .bind(key.as_bytes())
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| KvError::StoreError(e.to_string()))?;
+
+        Ok(res.rows_affected() > 0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// KvStore — delegates to KvStoreTx by acquiring a connection from the pool
+// ---------------------------------------------------------------------------
+
 #[async_trait]
 impl KvStore for PostgresKvStore {
     async fn get(&self, key: &Key) -> Result<Option<Value>, KvError> {
@@ -216,7 +226,7 @@ impl KvStore for PostgresKvStore {
             .acquire()
             .await
             .map_err(|e| KvError::StoreError(e.to_string()))?;
-        self.get_tx(&mut conn, key).await
+        <Self as KvStoreTx<sqlx::PgConnection>>::get_tx(self, &mut conn, key).await
     }
 
     async fn set(&self, key: Key, value: Value, options: SetOptions) -> Result<(), KvError> {
@@ -225,7 +235,7 @@ impl KvStore for PostgresKvStore {
             .acquire()
             .await
             .map_err(|e| KvError::StoreError(e.to_string()))?;
-        self.set_tx(&mut conn, key, value, options).await
+        <Self as KvStoreTx<sqlx::PgConnection>>::set_tx(self, &mut conn, key, value, options).await
     }
 
     async fn delete(&self, key: &Key) -> Result<bool, KvError> {
@@ -234,7 +244,7 @@ impl KvStore for PostgresKvStore {
             .acquire()
             .await
             .map_err(|e| KvError::StoreError(e.to_string()))?;
-        self.delete_tx(&mut conn, key).await
+        <Self as KvStoreTx<sqlx::PgConnection>>::delete_tx(self, &mut conn, key).await
     }
 
     async fn exists(&self, key: &Key) -> Result<bool, KvError> {
