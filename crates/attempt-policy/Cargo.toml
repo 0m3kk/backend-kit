@@ -1,6 +1,6 @@
 [package]
 name = "attempt-policy"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 description = "Core attempt tracking, max attempt policy enforcement, account lockouts, and rate-limiting abstractions for backend-kit."
 
