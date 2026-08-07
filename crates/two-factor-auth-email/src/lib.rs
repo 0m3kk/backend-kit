@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 pub use email_sender::{Email, EmailAddress, EmailError, EmailSender};
-use rand::Rng;
+use rand::RngExt;
 use secret_store::{SecretPath, SecretStore, SecretValue, SetSecretOptions};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -272,9 +272,9 @@ impl<S: SecretStore, E: EmailSender> TwoFactorProvider for EmailTwoFactorAuth<S,
 }
 
 fn generate_numeric_code(length: usize) -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..length)
-        .map(|_| rng.gen_range(0..=9).to_string())
+        .map(|_| rng.random_range(0..=9).to_string())
         .collect()
 }
 

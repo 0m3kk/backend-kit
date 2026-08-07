@@ -6,7 +6,7 @@ pub use types::{TotpAlgorithm, TotpConfig, TotpConfigBuilder, TotpDigits, TotpSe
 
 use async_trait::async_trait;
 use secret_store::{SecretPath, SecretStore, SecretValue, SetSecretOptions};
-use totp_rs::{Algorithm as TotpRsAlgorithm, Secret as TotpRsSecret, TOTP};
+use totp_rs::{Algorithm as TotpRsAlgorithm, Secret as TotpRsSecret, Totp as TotpRs};
 
 /// Production implementation of 2FA / TOTP authentication backed by `totp-rs` and `SecretStore`.
 #[derive(Clone)]
@@ -40,17 +40,16 @@ impl<S: SecretStore> TotpTwoFactorAuth<S> {
     }
 
     pub fn generate_secret(&self) -> Result<TotpSecret, TwoFactorError> {
-        let raw = TotpRsSecret::default().to_bytes().map_err(|e| {
-            TwoFactorError::InvalidSecret(format!("Failed to generate secret: {e}"))
-        })?;
-        TotpSecret::from_raw(&raw)
+        let secret_gen = TotpRsSecret::default();
+        let raw = secret_gen.as_bytes();
+        TotpSecret::from_raw(raw)
     }
 
     pub fn build_totp(
         &self,
         secret: &TotpSecret,
         skew_windows: u8,
-    ) -> Result<TOTP, TwoFactorError> {
+    ) -> Result<TotpRs, TwoFactorError> {
         let algo = match self.config.algorithm {
             TotpAlgorithm::Sha1 => TotpRsAlgorithm::SHA1,
             TotpAlgorithm::Sha256 => TotpRsAlgorithm::SHA256,
@@ -59,7 +58,8 @@ impl<S: SecretStore> TotpTwoFactorAuth<S> {
 
         let secret_bytes = secret.as_bytes().to_vec();
 
-        TOTP::new(
+        #[allow(deprecated)]
+        TotpRs::new(
             algo,
             self.config.digits.as_usize(),
             skew_windows,
@@ -77,7 +77,7 @@ impl<S: SecretStore> TotpTwoFactorAuth<S> {
         timestamp: u64,
     ) -> Result<String, TwoFactorError> {
         let totp = self.build_totp(secret, self.config.skew_windows)?;
-        Ok(totp.generate(timestamp))
+        Ok(totp.generate(timestamp).to_string())
     }
 
     pub fn verify_token(
@@ -92,7 +92,7 @@ impl<S: SecretStore> TotpTwoFactorAuth<S> {
             return Ok(false);
         }
         let totp = self.build_totp(secret, skew_windows)?;
-        Ok(totp.check(token, timestamp))
+        Ok(totp.check(token, timestamp).is_some())
     }
 
     pub fn build_otpauth_url(
@@ -102,12 +102,14 @@ impl<S: SecretStore> TotpTwoFactorAuth<S> {
     ) -> Result<String, TwoFactorError> {
         let temp_service = TotpTwoFactorAuth::with_config(self.store.clone(), config.clone());
         let totp = temp_service.build_totp(secret, config.skew_windows)?;
+        #[allow(deprecated)]
         Ok(totp.get_url())
     }
 
     #[cfg(feature = "qr")]
     pub fn generate_qr_base64(&self, secret: &TotpSecret) -> Result<String, TwoFactorError> {
         let totp = self.build_totp(secret, self.config.skew_windows)?;
+        #[allow(deprecated)]
         totp.get_qr_base64()
             .map_err(|e| TwoFactorError::QrCodeError(e.to_string()))
     }
@@ -115,6 +117,7 @@ impl<S: SecretStore> TotpTwoFactorAuth<S> {
     #[cfg(feature = "qr")]
     pub fn generate_qr_png(&self, secret: &TotpSecret) -> Result<Vec<u8>, TwoFactorError> {
         let totp = self.build_totp(secret, self.config.skew_windows)?;
+        #[allow(deprecated)]
         totp.get_qr_png()
             .map_err(|e| TwoFactorError::QrCodeError(e.to_string()))
     }

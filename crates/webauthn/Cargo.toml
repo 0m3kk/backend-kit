@@ -1,19 +1,20 @@
 [package]
-name = "two-factor-auth-email"
+name = "webauthn"
 version = "1.0.0"
 edition = "2024"
-description = "Email OTP 2FA implementation for two-factor-auth in backend-kit."
+description = "WebAuthn / Passkeys primary passwordless authentication engine for backend-kit."
 
 [dependencies]
-async-trait = "0.1"
-email-sender = { path = "../email-sender" }
-rand = "0.10"
 secret-store = { path = "../secret-store" }
 serde = { version = "1.0", features = ["derive"] }
-two-factor-auth = { path = "../two-factor-auth" }
+serde_json = "1.0"
+thiserror = "2.0"
+url = "2.5"
+uuid = { version = "1.24", features = ["v4", "v5", "serde"] }
+webauthn-rs = "0.5"
+webauthn-rs-proto = "0.5"
 
 [dev-dependencies]
-email-sender = { path = "../email-sender", features = ["memory"] }
 secret-store = { path = "../secret-store", features = ["memory"] }
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
 

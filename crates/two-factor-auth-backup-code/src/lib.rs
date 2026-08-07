@@ -36,7 +36,11 @@ impl<S: SecretStore> BackupCodeTwoFactorAuth<S> {
         let normalized = BackupCode::normalize(code);
         let mut hasher = Sha256::new();
         hasher.update(normalized.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     /// Generate a set of `count` cryptographically random backup codes.

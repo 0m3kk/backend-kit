@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 /// Supported Two-Factor Authentication mechanisms.
@@ -95,14 +95,14 @@ pub struct BackupCode;
 
 impl BackupCode {
     pub fn generate_set(count: usize) -> Vec<String> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         const CHARS: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
         (0..count)
             .map(|_| {
                 let code: String = (0..8)
                     .map(|_| {
-                        let idx = rng.gen_range(0..=CHARS.len() - 1);
+                        let idx = rng.random_range(0..CHARS.len());
                         CHARS[idx] as char
                     })
                     .collect();
