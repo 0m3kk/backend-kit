@@ -22,6 +22,9 @@ Production-grade, generic, type-safe max attempt policy enforcement, exponential
   - Key-value store tracker backed by `kv_store::KvStore` supporting Redis, PostgreSQL (`PostgresKvStore`), Redb, Memory (`MemoryKvStore`), etc. with automatic TTL expiration.
 - **High-Level Manager (`AttemptManager`)**:
   - Ergonomic `check_attempt()`, `record_failed_attempt()`, `record_success()`, and `unlock()` workflow.
+- **Transactional API (`AttemptTrackerTx<Conn>`)**:
+  - All tracker operations available as `_tx` methods accepting an external connection handle. The caller owns the transaction lifecycle (begin/commit/rollback).
+  - `AttemptManager` exposes `_tx` variants (`check_attempt_tx`, `record_failed_attempt_tx`, `record_success_tx`, `unlock_tx`) when the tracker implements `AttemptTrackerTx<Conn>`.
 
 ## Quick Example
 

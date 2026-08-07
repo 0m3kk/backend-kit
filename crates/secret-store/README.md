@@ -17,6 +17,7 @@ Core specification, cryptographic primitives, envelope encryption, and `SecretSt
 - **Hierarchical Pathing**: `SecretPath` wrapper for structured secret names (e.g., `prod/database/password`).
 - **Immutable Secret Versioning**: Explicit tracking and retrieval of specific immutable versions per path.
 - **Metadata & Tagging**: Associate custom key-value tags with secrets and query headers without exposing secrets.
+- **Transactional API (`SecretStoreTx<Conn>`)**: All operations available as `_tx` methods accepting an external connection handle. Caller owns the transaction lifecycle.
 
 ## Code Example
 

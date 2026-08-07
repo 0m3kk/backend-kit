@@ -9,6 +9,7 @@ Production-grade PostgreSQL implementation of the [`EventStore`](../event-sourci
 - **Fast Conflict Check**: Uses `SELECT EXISTS(SELECT 1 FROM events ...)` to check `AppendCondition` without loading row payloads into memory.
 - **Chunked Batch Insertion**: Multi-row batch `INSERT` statements chunked at `1,000` events per batch to prevent PostgreSQL's parameter limits.
 - **Reactive Wire-Level Streaming**: Reactive `async_stream::stream!` returning owned `'static` streams.
+- **Transactional API (`EventStoreTx<PgConnection>`)**: `append_tx` and `read_tx` methods accepting an external `&mut PgConnection`. The caller owns the transaction lifecycle (begin/commit/rollback). `read_tx` returns `Vec<SequencedEvent>` (streams cannot borrow from connections).
 
 ## Database Schema
 

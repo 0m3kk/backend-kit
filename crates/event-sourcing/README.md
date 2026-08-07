@@ -8,27 +8,28 @@ DCB is an architectural pattern for event-sourced systems that decouples consist
 
 ## Specification & Trait Mapping
 
-| DCB Specification Concept | Rust Type / Trait in `event-sourcing`      | Description                                                                 |
-| :------------------------ | :----------------------------------------- | :-------------------------------------------------------------------------- |
-| **Domain Event Trait**    | [`DomainEvent`](src/types.rs#L5)           | Strongly-typed trait for domain event data payloads                         |
-| **Sequence Position**     | [`SequencePosition`](src/types.rs#L33)     | Monotonic, unique event position (`u64`)                                    |
-| **Event Type**            | [`EventType`](src/types.rs#L65)            | String identifier of event type                                             |
-| **Tag**                   | [`Tag`](src/types.rs#L93)                  | Domain partitioning tag (e.g. `user:123`, `account:acc-1`)                  |
-| **Event**                 | [`Event`](src/types.rs#L145)               | Unsequenced event with type, payload data, and tags                         |
-| **Sequenced Event**       | [`SequencedEvent`](src/types.rs#L185)      | Persisted event bound to a `SequencePosition`                               |
-| **Query Item**            | [`QueryItem`](src/types.rs#L210)           | Filter matching event types (OR) and tags (AND)                             |
-| **Query**                 | [`Query`](src/types.rs#L270)               | Combined query items with OR logic                                          |
-| **Append Condition**      | [`AppendCondition`](src/types.rs#L320)     | Optimistic concurrency constraint for atomic append                         |
-| **Read Options**          | [`ReadOptions`](src/types.rs#L370)         | Filtering, direction, limit options                                         |
-| **Event Stream**          | [`EventStream`](src/store.rs#L27)          | Async reactive stream of `Result<SequencedEvent, ReadError>`                |
-| **Event Store Interface** | [`EventStore`](src/store.rs#L30)           | Core trait for async `read` (stream) and `append`                           |
-| **Decision Model**        | [`DecisionModel`](src/decision.rs)         | Trait for state projection and dynamic query specification                  |
-| **Loaded Model**          | [`LoadedModel`](src/decision.rs)           | Container tracking model state `M` and `last_position`                      |
-| **Decision Models Trait** | [`DecisionModels`](src/decision.rs)        | Trait for single/multi model hydration (`Single`, `Pair`, `Triple`, `Quad`) |
-| **Loaded Models**         | [`LoadedModels`](src/decision.rs)          | Container tracking multi-model state, combined query & max position         |
-| **Event Store Extension** | [`EventStoreExt`](src/decision.rs)         | Extension trait for `load_decision_model`                                   |
-| **Snapshot Extension**    | [`EventStoreSnapshotExt`](src/snapshot.rs) | Extension trait for snapshot loading with catch-up                          |
-| **Snapshot Options**      | [`SnapshotOptions`](src/snapshot.rs)       | Configurable auto-save threshold options                                    |
+| DCB Specification Concept | Rust Type / Trait in `event-sourcing`      | Description                                                                                                                         |
+| :------------------------ | :----------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
+| **Domain Event Trait**    | [`DomainEvent`](src/types.rs#L5)           | Strongly-typed trait for domain event data payloads                                                                                 |
+| **Sequence Position**     | [`SequencePosition`](src/types.rs#L33)     | Monotonic, unique event position (`u64`)                                                                                            |
+| **Event Type**            | [`EventType`](src/types.rs#L65)            | String identifier of event type                                                                                                     |
+| **Tag**                   | [`Tag`](src/types.rs#L93)                  | Domain partitioning tag (e.g. `user:123`, `account:acc-1`)                                                                          |
+| **Event**                 | [`Event`](src/types.rs#L145)               | Unsequenced event with type, payload data, and tags                                                                                 |
+| **Sequenced Event**       | [`SequencedEvent`](src/types.rs#L185)      | Persisted event bound to a `SequencePosition`                                                                                       |
+| **Query Item**            | [`QueryItem`](src/types.rs#L210)           | Filter matching event types (OR) and tags (AND)                                                                                     |
+| **Query**                 | [`Query`](src/types.rs#L270)               | Combined query items with OR logic                                                                                                  |
+| **Append Condition**      | [`AppendCondition`](src/types.rs#L320)     | Optimistic concurrency constraint for atomic append                                                                                 |
+| **Read Options**          | [`ReadOptions`](src/types.rs#L370)         | Filtering, direction, limit options                                                                                                 |
+| **Event Stream**          | [`EventStream`](src/store.rs#L27)          | Async reactive stream of `Result<SequencedEvent, ReadError>`                                                                        |
+| **Event Store Interface** | [`EventStore`](src/store.rs#L30)           | Core trait for async `read` (stream) and `append`                                                                                   |
+| **Event Store TX Trait**  | [`EventStoreTx<Conn>`](src/store.rs)       | Transactional operations accepting an external connection handle. `read_tx` returns `Vec` (streams cannot borrow from connections). |
+| **Decision Model**        | [`DecisionModel`](src/decision.rs)         | Trait for state projection and dynamic query specification                                                                          |
+| **Loaded Model**          | [`LoadedModel`](src/decision.rs)           | Container tracking model state `M` and `last_position`                                                                              |
+| **Decision Models Trait** | [`DecisionModels`](src/decision.rs)        | Trait for single/multi model hydration (`Single`, `Pair`, `Triple`, `Quad`)                                                         |
+| **Loaded Models**         | [`LoadedModels`](src/decision.rs)          | Container tracking multi-model state, combined query & max position                                                                 |
+| **Event Store Extension** | [`EventStoreExt`](src/decision.rs)         | Extension trait for `load_decision_model`                                                                                           |
+| **Snapshot Extension**    | [`EventStoreSnapshotExt`](src/snapshot.rs) | Extension trait for snapshot loading with catch-up                                                                                  |
+| **Snapshot Options**      | [`SnapshotOptions`](src/snapshot.rs)       | Configurable auto-save threshold options                                                                                            |
 
 ## Strongly-Typed Domain Event Usage
 
