@@ -1,0 +1,22 @@
+[package]
+name = "webauthn"
+version = "1.0.0"
+edition = "2024"
+description = "WebAuthn / Passkeys primary passwordless authentication engine for backend-kit."
+
+[dependencies]
+secret-store = { path = "../secret-store" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+url = "2.5"
+uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
+webauthn-rs = "0.5"
+webauthn-rs-proto = "0.5"
+
+[dev-dependencies]
+secret-store = { path = "../secret-store", features = ["memory"] }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
