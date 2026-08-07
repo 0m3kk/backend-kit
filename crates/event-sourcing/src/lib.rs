@@ -12,5 +12,5 @@ pub use decision::{
 pub use snapshot::{
     EventStoreSnapshotExt, SNAPSHOT_PREFIX, SnapshotError, SnapshotOptions, snapshot_key,
 };
-pub use store::{AppendError, EventStore, EventStream, ReadError};
+pub use store::{AppendError, EventStore, EventStoreTx, EventStream, ReadError};
 pub use types::*;

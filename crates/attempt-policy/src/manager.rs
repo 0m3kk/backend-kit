@@ -1,8 +1,6 @@
 use crate::errors::AttemptError;
-use crate::kv::KvAttemptTracker;
-use crate::tracker::AttemptTracker;
+use crate::tracker::{AttemptTracker, AttemptTrackerTx};
 use crate::types::{AttemptPolicy, AttemptStatus};
-use kv_store::{KvStore, KvStoreTx};
 
 /// High-level manager pairing an `AttemptPolicy` with an `AttemptTracker`.
 #[derive(Debug, Clone)]
@@ -50,18 +48,18 @@ impl<T: AttemptTracker> AttemptManager<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Transactional methods (available when tracker is KvAttemptTracker<S: KvStoreTx<Conn>>)
+// Transactional methods (available when tracker implements AttemptTrackerTx<Conn>)
 // ---------------------------------------------------------------------------
 
-impl<S: KvStore> AttemptManager<KvAttemptTracker<S>> {
-    /// Check if key is allowed within an external database transaction.
+impl<T: AttemptTracker> AttemptManager<T> {
+    /// Check if key is allowed within an external transaction.
     pub async fn check_attempt_tx<Conn: Send>(
         &self,
         conn: &mut Conn,
         key: &str,
     ) -> Result<AttemptStatus, AttemptError>
     where
-        S: KvStoreTx<Conn>,
+        T: AttemptTrackerTx<Conn>,
     {
         let status = self
             .tracker
@@ -70,14 +68,14 @@ impl<S: KvStore> AttemptManager<KvAttemptTracker<S>> {
         into_result(status)
     }
 
-    /// Record a failed attempt within an external database transaction.
+    /// Record a failed attempt within an external transaction.
     pub async fn record_failed_attempt_tx<Conn: Send>(
         &self,
         conn: &mut Conn,
         key: &str,
     ) -> Result<AttemptStatus, AttemptError>
     where
-        S: KvStoreTx<Conn>,
+        T: AttemptTrackerTx<Conn>,
     {
         let status = self
             .tracker
@@ -86,14 +84,14 @@ impl<S: KvStore> AttemptManager<KvAttemptTracker<S>> {
         into_result(status)
     }
 
-    /// Record a successful attempt within an external database transaction.
+    /// Record a successful attempt within an external transaction.
     pub async fn record_success_tx<Conn: Send>(
         &self,
         conn: &mut Conn,
         key: &str,
     ) -> Result<(), AttemptError>
     where
-        S: KvStoreTx<Conn>,
+        T: AttemptTrackerTx<Conn>,
     {
         if self.policy.reset_on_success {
             self.tracker.record_success_tx(conn, key).await?;
@@ -101,14 +99,14 @@ impl<S: KvStore> AttemptManager<KvAttemptTracker<S>> {
         Ok(())
     }
 
-    /// Unlock/reset key within an external database transaction.
+    /// Unlock/reset key within an external transaction.
     pub async fn unlock_tx<Conn: Send>(
         &self,
         conn: &mut Conn,
         key: &str,
     ) -> Result<(), AttemptError>
     where
-        S: KvStoreTx<Conn>,
+        T: AttemptTrackerTx<Conn>,
     {
         self.tracker.reset_tx(conn, key).await
     }

@@ -1,5 +1,5 @@
 use crate::errors::AttemptError;
-use crate::tracker::AttemptTracker;
+use crate::tracker::{AttemptTracker, AttemptTrackerTx};
 use crate::types::{AttemptPolicy, AttemptRecord, AttemptStatus};
 use async_trait::async_trait;
 use kv_store::{Key, KvStore, KvStoreTx, SetOptions, Value};
@@ -212,20 +212,17 @@ impl<S: KvStore> AttemptTracker for KvAttemptTracker<S> {
 }
 
 // ---------------------------------------------------------------------------
-// Transactional methods (uses KvStoreTx<Conn> trait)
+// AttemptTrackerTx impl (uses KvStoreTx<Conn> trait)
 // ---------------------------------------------------------------------------
 
-impl<S: KvStore> KvAttemptTracker<S> {
-    /// Check status of identifier within an external transaction.
-    pub async fn check_status_tx<Conn: Send>(
+#[async_trait]
+impl<Conn: Send, S: KvStoreTx<Conn>> AttemptTrackerTx<Conn> for KvAttemptTracker<S> {
+    async fn check_status_tx(
         &self,
         conn: &mut Conn,
         key: &str,
         policy: &AttemptPolicy,
-    ) -> Result<AttemptStatus, AttemptError>
-    where
-        S: KvStoreTx<Conn>,
-    {
+    ) -> Result<AttemptStatus, AttemptError> {
         let full_key = self.make_key(key);
         let now = SystemTime::now();
 
@@ -239,16 +236,12 @@ impl<S: KvStore> KvAttemptTracker<S> {
         Ok(evaluate_status(record, policy, now))
     }
 
-    /// Record a failed attempt within an external transaction.
-    pub async fn record_failed_attempt_tx<Conn: Send>(
+    async fn record_failed_attempt_tx(
         &self,
         conn: &mut Conn,
         key: &str,
         policy: &AttemptPolicy,
-    ) -> Result<AttemptStatus, AttemptError>
-    where
-        S: KvStoreTx<Conn>,
-    {
+    ) -> Result<AttemptStatus, AttemptError> {
         let full_key = self.make_key(key);
         let now = SystemTime::now();
 
@@ -272,15 +265,7 @@ impl<S: KvStore> KvAttemptTracker<S> {
         Ok(status)
     }
 
-    /// Record a successful attempt within an external transaction, deleting the attempt record.
-    pub async fn record_success_tx<Conn: Send>(
-        &self,
-        conn: &mut Conn,
-        key: &str,
-    ) -> Result<(), AttemptError>
-    where
-        S: KvStoreTx<Conn>,
-    {
+    async fn record_success_tx(&self, conn: &mut Conn, key: &str) -> Result<(), AttemptError> {
         let full_key = self.make_key(key);
         self.store
             .delete_tx(conn, &full_key)
@@ -289,11 +274,7 @@ impl<S: KvStore> KvAttemptTracker<S> {
         Ok(())
     }
 
-    /// Reset/unlock identifier within an external transaction.
-    pub async fn reset_tx<Conn: Send>(&self, conn: &mut Conn, key: &str) -> Result<(), AttemptError>
-    where
-        S: KvStoreTx<Conn>,
-    {
+    async fn reset_tx(&self, conn: &mut Conn, key: &str) -> Result<(), AttemptError> {
         self.record_success_tx(conn, key).await
     }
 }
