@@ -16,6 +16,7 @@ members = [
     "crates/password-hasher",
     "crates/password-hasher-argon2",
     "crates/password-hasher-bcrypt",
+    "crates/password-policy",
     "crates/secret-store",
     "crates/secret-store-postgres",
     "crates/sms-sender",
