@@ -1,0 +1,25 @@
+[package]
+name = "two-factor-auth-totp"
+version = "1.0.0"
+edition = "2024"
+description = "TOTP (totp-rs) implementation of two-factor-auth for backend-kit."
+
+[features]
+default = ["qr"]
+qr = ["totp-rs/qr"]
+
+[dependencies]
+async-trait = "0.1"
+base32 = "0.5"
+rand = "0.8"
+secret-store = { path = "../secret-store" }
+serde = { version = "1.0", features = ["derive"] }
+totp-rs = { version = "5.6", features = ["gen_secret", "serde"] }
+two-factor-auth = { path = "../two-factor-auth" }
+
+[dev-dependencies]
+secret-store = { path = "../secret-store", features = ["memory"] }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

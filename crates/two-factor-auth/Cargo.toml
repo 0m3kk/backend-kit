@@ -1,0 +1,26 @@
+[package]
+name = "two-factor-auth"
+version = "1.0.0"
+edition = "2024"
+description = "Core traits, domain models, errors, and in-memory mock for 2FA / TOTP authentication in backend-kit."
+
+[features]
+default = []
+memory = ["dep:tokio"]
+
+[dependencies]
+async-trait = "0.1"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.53", features = ["sync"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[[test]]
+name = "memory_two_factor_auth_tests"
+required-features = ["memory"]
+
+[lints]
+workspace = true
