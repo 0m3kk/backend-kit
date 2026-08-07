@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use two_factor_auth::errors::TwoFactorError;
 
@@ -54,9 +54,8 @@ pub struct TotpSecret {
 
 impl TotpSecret {
     pub fn generate() -> Self {
-        let mut rng = rand::thread_rng();
         let mut bytes = [0u8; 20];
-        rng.fill(&mut bytes);
+        rand::rng().fill(&mut bytes);
         let b32 = base32::encode(base32::Alphabet::Rfc4648 { padding: false }, &bytes);
         Self {
             base32: b32,

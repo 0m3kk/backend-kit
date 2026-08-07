@@ -7,7 +7,7 @@ description = "Email OTP 2FA implementation for two-factor-auth in backend-kit."
 [dependencies]
 async-trait = "0.1"
 email-sender = { path = "../email-sender" }
-rand = "0.8"
+rand = "0.10"
 secret-store = { path = "../secret-store" }
 serde = { version = "1.0", features = ["derive"] }
 two-factor-auth = { path = "../two-factor-auth" }
