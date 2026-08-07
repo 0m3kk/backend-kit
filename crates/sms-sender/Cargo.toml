@@ -1,0 +1,21 @@
+[package]
+name = "sms-sender"
+version = "1.0.0"
+edition = "2024"
+description = "Core traits, domain models, and in-memory provider for SMS sending in backend-kit."
+
+[features]
+default = ["memory"]
+memory = ["dep:tokio"]
+
+[dependencies]
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.53", features = ["sync"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

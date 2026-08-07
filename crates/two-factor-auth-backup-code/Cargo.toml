@@ -1,0 +1,19 @@
+[package]
+name = "two-factor-auth-backup-code"
+version = "1.0.0"
+edition = "2024"
+description = "Backup code 2FA implementation for two-factor-auth in backend-kit."
+
+[dependencies]
+async-trait = "0.1"
+secret-store = { path = "../secret-store" }
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+two-factor-auth = { path = "../two-factor-auth" }
+
+[dev-dependencies]
+secret-store = { path = "../secret-store", features = ["memory"] }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

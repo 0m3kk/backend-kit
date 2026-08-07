@@ -18,9 +18,15 @@ members = [
     "crates/password-hasher-bcrypt",
     "crates/secret-store",
     "crates/secret-store-postgres",
+    "crates/sms-sender",
     "crates/template-engine",
     "crates/template-engine-askama",
     "crates/template-engine-tera",
+    "crates/two-factor-auth",
+    "crates/two-factor-auth-backup-code",
+    "crates/two-factor-auth-email",
+    "crates/two-factor-auth-sms",
+    "crates/two-factor-auth-totp",
 ]
 
 [workspace.lints.clippy]

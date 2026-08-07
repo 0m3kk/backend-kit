@@ -1,0 +1,21 @@
+[package]
+name = "two-factor-auth-email"
+version = "1.0.0"
+edition = "2024"
+description = "Email OTP 2FA implementation for two-factor-auth in backend-kit."
+
+[dependencies]
+async-trait = "0.1"
+email-sender = { path = "../email-sender" }
+rand = "0.8"
+secret-store = { path = "../secret-store" }
+serde = { version = "1.0", features = ["derive"] }
+two-factor-auth = { path = "../two-factor-auth" }
+
+[dev-dependencies]
+email-sender = { path = "../email-sender", features = ["memory"] }
+secret-store = { path = "../secret-store", features = ["memory"] }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
