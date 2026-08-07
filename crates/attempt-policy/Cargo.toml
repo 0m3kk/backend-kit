@@ -1,0 +1,19 @@
+[package]
+name = "attempt-policy"
+version = "1.0.0"
+edition = "2024"
+description = "Core attempt tracking, max attempt policy enforcement, account lockouts, and rate-limiting abstractions for backend-kit."
+
+[dependencies]
+async-trait = "0.1"
+kv-store = { path = "../kv-store" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+kv-store = { path = "../kv-store", features = ["memory"] }
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

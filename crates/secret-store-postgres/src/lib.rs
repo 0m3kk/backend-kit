@@ -8,7 +8,8 @@ use tokio::sync::RwLock;
 
 use secret_store::{
     CipherAlgorithm, EncryptedPayload, KeyRing, ListSecretOptions, MasterKey, SecretCrypto,
-    SecretEntry, SecretError, SecretHeader, SecretPath, SecretStore, SecretValue, SetSecretOptions,
+    SecretEntry, SecretError, SecretHeader, SecretPath, SecretStore, SecretStoreTx, SecretValue,
+    SetSecretOptions,
 };
 
 /// PostgreSQL-backed implementation of `SecretStore` with Envelope Encryption and `KeyRing` rotation.
@@ -51,11 +52,17 @@ impl PostgresSecretStore {
         *kr_guard = KeyRing::new(keys)?;
         Ok(())
     }
+}
 
-    /// Retrieve the latest active version of a secret using a PostgreSQL connection or transaction handle.
-    pub async fn get_tx(
+// ---------------------------------------------------------------------------
+// SecretStoreTx<PgConnection> — the canonical transactional implementation
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl SecretStoreTx<sqlx::PgConnection> for PostgresSecretStore {
+    async fn get_tx(
         &self,
-        executor: &mut sqlx::PgConnection,
+        conn: &mut sqlx::PgConnection,
         path: &SecretPath,
     ) -> Result<Option<SecretEntry>, SecretError> {
         let row = sqlx::query(
@@ -65,7 +72,7 @@ impl PostgresSecretStore {
              WHERE h.path = $1 AND h.is_deleted = FALSE AND (v.expires_at IS NULL OR v.expires_at > NOW())"
         )
         .bind(path.as_str())
-        .fetch_optional(&mut *executor)
+        .fetch_optional(&mut *conn)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
@@ -120,10 +127,9 @@ impl PostgresSecretStore {
         }))
     }
 
-    /// Retrieve a specific version of a secret using a PostgreSQL connection or transaction handle.
-    pub async fn get_version_tx(
+    async fn get_version_tx(
         &self,
-        executor: &mut sqlx::PgConnection,
+        conn: &mut sqlx::PgConnection,
         path: &SecretPath,
         version: u64,
     ) -> Result<Option<SecretEntry>, SecretError> {
@@ -135,7 +141,7 @@ impl PostgresSecretStore {
         )
         .bind(path.as_str())
         .bind(version as i64)
-        .fetch_optional(&mut *executor)
+        .fetch_optional(&mut *conn)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
@@ -189,10 +195,9 @@ impl PostgresSecretStore {
         }))
     }
 
-    /// Store a new version of a secret using a PostgreSQL connection or transaction handle.
-    pub async fn set_tx(
+    async fn set_tx(
         &self,
-        executor: &mut sqlx::PgConnection,
+        conn: &mut sqlx::PgConnection,
         path: SecretPath,
         value: SecretValue,
         options: SetSecretOptions,
@@ -219,7 +224,7 @@ impl PostgresSecretStore {
         )
         .bind(path.as_str())
         .bind(&tags_json)
-        .fetch_one(&mut *executor)
+        .fetch_one(&mut *conn)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
@@ -248,7 +253,7 @@ impl PostgresSecretStore {
         .bind(&payload.ciphertext)
         .bind(&payload.tag)
         .bind(ttl_secs)
-        .fetch_one(&mut *executor)
+        .fetch_one(&mut *conn)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
@@ -265,27 +270,25 @@ impl PostgresSecretStore {
         })
     }
 
-    /// Delete a secret using a PostgreSQL connection or transaction handle.
-    pub async fn delete_tx(
+    async fn delete_tx(
         &self,
-        executor: &mut sqlx::PgConnection,
+        conn: &mut sqlx::PgConnection,
         path: &SecretPath,
     ) -> Result<bool, SecretError> {
         let res = sqlx::query(
             "UPDATE secret_headers SET is_deleted = TRUE, updated_at = NOW() WHERE path = $1 AND is_deleted = FALSE"
         )
         .bind(path.as_str())
-        .execute(&mut *executor)
+        .execute(&mut *conn)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
         Ok(res.rows_affected() > 0)
     }
 
-    /// List secret headers matching prefix/tag filters using a PostgreSQL connection or transaction handle.
-    pub async fn list_tx(
+    async fn list_tx(
         &self,
-        executor: &mut sqlx::PgConnection,
+        conn: &mut sqlx::PgConnection,
         options: ListSecretOptions,
     ) -> Result<Vec<SecretHeader>, SecretError> {
         let tag_filter_json = serde_json::to_value(&options.tag_filter)
@@ -321,7 +324,7 @@ impl PostgresSecretStore {
         }
 
         let rows = sqlx::query(&sql)
-            .fetch_all(&mut *executor)
+            .fetch_all(&mut *conn)
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
@@ -351,11 +354,7 @@ impl PostgresSecretStore {
         Ok(headers)
     }
 
-    /// Re-wrap secret entries using a PostgreSQL connection or transaction handle.
-    pub async fn rotate_key_tx(
-        &self,
-        executor: &mut sqlx::PgConnection,
-    ) -> Result<u64, SecretError> {
+    async fn rotate_key_tx(&self, conn: &mut sqlx::PgConnection) -> Result<u64, SecretError> {
         let keyring_guard = self.keyring.read().await;
         let target_kek_version = keyring_guard.current_version();
 
@@ -363,7 +362,7 @@ impl PostgresSecretStore {
             "SELECT path, version, kek_version, wrapped_dek FROM secret_versions WHERE kek_version != $1"
         )
         .bind(target_kek_version as i32)
-        .fetch_all(&mut *executor)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
@@ -385,7 +384,7 @@ impl PostgresSecretStore {
             .bind(&new_wrapped_dek)
             .bind(&path_str)
             .bind(version)
-            .execute(&mut *executor)
+            .execute(&mut *conn)
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
@@ -395,10 +394,9 @@ impl PostgresSecretStore {
         Ok(count)
     }
 
-    /// Purge up to `limit` expired secrets using a PostgreSQL connection or transaction handle.
-    pub async fn clean_expired_tx(
+    async fn clean_expired_tx(
         &self,
-        executor: &mut sqlx::PgConnection,
+        conn: &mut sqlx::PgConnection,
         limit: Option<usize>,
     ) -> Result<u64, SecretError> {
         let max_limit = limit.unwrap_or(1000) as i64;
@@ -408,13 +406,17 @@ impl PostgresSecretStore {
              )"
         )
         .bind(max_limit)
-        .execute(&mut *executor)
+        .execute(&mut *conn)
         .await
         .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
         Ok(res.rows_affected())
     }
 }
+
+// ---------------------------------------------------------------------------
+// SecretStore — delegates to SecretStoreTx by acquiring a connection from the pool
+// ---------------------------------------------------------------------------
 
 #[async_trait]
 impl SecretStore for PostgresSecretStore {
@@ -424,7 +426,7 @@ impl SecretStore for PostgresSecretStore {
             .acquire()
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
-        self.get_tx(&mut conn, path).await
+        <Self as SecretStoreTx<sqlx::PgConnection>>::get_tx(self, &mut conn, path).await
     }
 
     async fn get_version(
@@ -437,7 +439,8 @@ impl SecretStore for PostgresSecretStore {
             .acquire()
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
-        self.get_version_tx(&mut conn, path, version).await
+        <Self as SecretStoreTx<sqlx::PgConnection>>::get_version_tx(self, &mut conn, path, version)
+            .await
     }
 
     async fn set(
@@ -452,7 +455,10 @@ impl SecretStore for PostgresSecretStore {
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
-        let entry = self.set_tx(&mut tx, path, value, options).await?;
+        let entry = <Self as SecretStoreTx<sqlx::PgConnection>>::set_tx(
+            self, &mut tx, path, value, options,
+        )
+        .await?;
 
         tx.commit()
             .await
@@ -467,7 +473,7 @@ impl SecretStore for PostgresSecretStore {
             .acquire()
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
-        self.delete_tx(&mut conn, path).await
+        <Self as SecretStoreTx<sqlx::PgConnection>>::delete_tx(self, &mut conn, path).await
     }
 
     async fn list(&self, options: ListSecretOptions) -> Result<Vec<SecretHeader>, SecretError> {
@@ -476,7 +482,7 @@ impl SecretStore for PostgresSecretStore {
             .acquire()
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
-        self.list_tx(&mut conn, options).await
+        <Self as SecretStoreTx<sqlx::PgConnection>>::list_tx(self, &mut conn, options).await
     }
 
     async fn rotate_key(&self) -> Result<u64, SecretError> {
@@ -486,7 +492,8 @@ impl SecretStore for PostgresSecretStore {
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
 
-        let count = self.rotate_key_tx(&mut tx).await?;
+        let count =
+            <Self as SecretStoreTx<sqlx::PgConnection>>::rotate_key_tx(self, &mut tx).await?;
 
         tx.commit()
             .await
@@ -501,6 +508,6 @@ impl SecretStore for PostgresSecretStore {
             .acquire()
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;
-        self.clean_expired_tx(&mut conn, limit).await
+        <Self as SecretStoreTx<sqlx::PgConnection>>::clean_expired_tx(self, &mut conn, limit).await
     }
 }

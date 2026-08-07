@@ -80,3 +80,87 @@ impl<T: KvStore + ?Sized> KvStore for Arc<T> {
         (**self).clean_expired(limit).await
     }
 }
+
+/// KV store operations that can participate in an external transaction/connection.
+///
+/// `Conn` represents the connection or transaction handle type (e.g., `sqlx::PgConnection`).
+/// The caller owns the connection/transaction lifecycle — the store only executes operations
+/// through the provided handle.
+#[async_trait]
+pub trait KvStoreTx<Conn: Send>: KvStore {
+    /// Retrieve a value by key using the provided connection handle.
+    async fn get_tx(&self, conn: &mut Conn, key: &Key) -> Result<Option<Value>, KvError>;
+
+    /// Set a key to a value with optional parameters using the provided connection handle.
+    async fn set_tx(
+        &self,
+        conn: &mut Conn,
+        key: Key,
+        value: Value,
+        options: SetOptions,
+    ) -> Result<(), KvError>;
+
+    /// Delete a key from the store using the provided connection handle.
+    async fn delete_tx(&self, conn: &mut Conn, key: &Key) -> Result<bool, KvError>;
+
+    /// Check if a key exists using the provided connection handle.
+    async fn exists_tx(&self, conn: &mut Conn, key: &Key) -> Result<bool, KvError>;
+
+    /// Atomically execute a batch of operations using the provided connection handle.
+    async fn batch_tx(&self, conn: &mut Conn, ops: Vec<BatchOp>) -> Result<(), KvError>;
+
+    /// Retrieve the remaining TTL for a key using the provided connection handle.
+    async fn ttl_tx(&self, conn: &mut Conn, key: &Key) -> Result<Option<Duration>, KvError>;
+
+    /// Remove all entries from the store using the provided connection handle.
+    async fn clear_tx(&self, conn: &mut Conn) -> Result<(), KvError>;
+
+    /// Purge up to `limit` expired entries using the provided connection handle.
+    async fn clean_expired_tx(&self, conn: &mut Conn, limit: Option<usize>)
+    -> Result<u64, KvError>;
+}
+
+#[async_trait]
+impl<T: KvStoreTx<Conn> + ?Sized, Conn: Send> KvStoreTx<Conn> for Arc<T> {
+    async fn get_tx(&self, conn: &mut Conn, key: &Key) -> Result<Option<Value>, KvError> {
+        (**self).get_tx(conn, key).await
+    }
+
+    async fn set_tx(
+        &self,
+        conn: &mut Conn,
+        key: Key,
+        value: Value,
+        options: SetOptions,
+    ) -> Result<(), KvError> {
+        (**self).set_tx(conn, key, value, options).await
+    }
+
+    async fn delete_tx(&self, conn: &mut Conn, key: &Key) -> Result<bool, KvError> {
+        (**self).delete_tx(conn, key).await
+    }
+
+    async fn exists_tx(&self, conn: &mut Conn, key: &Key) -> Result<bool, KvError> {
+        (**self).exists_tx(conn, key).await
+    }
+
+    async fn batch_tx(&self, conn: &mut Conn, ops: Vec<BatchOp>) -> Result<(), KvError> {
+        (**self).batch_tx(conn, ops).await
+    }
+
+    async fn ttl_tx(&self, conn: &mut Conn, key: &Key) -> Result<Option<Duration>, KvError> {
+        (**self).ttl_tx(conn, key).await
+    }
+
+    async fn clear_tx(&self, conn: &mut Conn) -> Result<(), KvError> {
+        (**self).clear_tx(conn).await
+    }
+
+    async fn clean_expired_tx(
+        &self,
+        conn: &mut Conn,
+        limit: Option<usize>,
+    ) -> Result<u64, KvError> {
+        (**self).clean_expired_tx(conn, limit).await
+    }
+}

@@ -17,6 +17,7 @@ A production-grade, modular collection of foundational Rust backend libraries an
 ├── Secret Management     ──► secret-store, secret-store-postgres
 ├── Password Hashing      ──► password-hasher, password-hasher-argon2, password-hasher-bcrypt
 ├── Password Policy       ──► password-policy
+├── Attempt Policy        ──► attempt-policy
 ├── Email Delivery        ──► email-sender, email-sender-resend, email-sender-sendgrid, email-sender-smtp
 ├── SMS Delivery          ──► sms-sender
 ├── Template Engines      ──► template-engine, template-engine-askama, template-engine-tera
@@ -26,7 +27,7 @@ A production-grade, modular collection of foundational Rust backend libraries an
 
 ### Key Design Principles
 
-1. **Clean Architecture & Trait Abstraction**: Core crates (`kv-store`, `event-sourcing`, `secret-store`, `email-sender`, `sms-sender`, `password-hasher`, `template-engine`, `two-factor-auth`, `webauthn`) define pure async trait interfaces and domain models without heavy infrastructure dependencies.
+1. **Clean Architecture & Trait Abstraction**: Core crates (`kv-store`, `event-sourcing`, `secret-store`, `email-sender`, `sms-sender`, `password-hasher`, `template-engine`, `two-factor-auth`, `webauthn`, `attempt-policy`) define pure async trait interfaces and domain models without heavy infrastructure dependencies.
 2. **Pluggable Implementations**: Swap backends seamlessly (e.g., PostgreSQL vs. Redis vs. Redb, or Resend vs. SendGrid vs. SMTP) by changing dependencies without mutating business logic.
 3. **Built-in Mocking for Unit Testing**: Core crates provide optional in-memory stores (`memory` feature flag) and no-op implementations (`noop` feature flag) for instant unit testing without external database containers.
 4. **Strict Quality Standards**: Workspace-wide Clippy configuration (`unwrap_used = "deny"`, `expect_used = "deny"`) ensuring production runtime safety.
@@ -37,6 +38,7 @@ A production-grade, modular collection of foundational Rust backend libraries an
 
 | Module Domain           | Crate                                                                         | Path                                                                                 | Description                                                                                                                                                                                                                                                |
 | :---------------------- | :---------------------------------------------------------------------------- | :----------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Attempt Policy**      | [`attempt-policy`](crates/attempt-policy/README.md)                           | [`crates/attempt-policy`](crates/attempt-policy/README.md)                           | Core attempt tracking, max attempt policy enforcement (`AttemptPolicy`), sliding window rate-limiting, exponential lockouts, `InMemoryAttemptTracker`, and pluggable `KvAttemptTracker` backend.                                                           |
 | **CQRS**                | [`cqrs`](crates/cqrs/README.md)                                               | [`crates/cqrs`](crates/cqrs/README.md)                                               | 5-step Command pipeline (`Command<M, C>`), multi-model hydration (`DecisionModels`), KV snapshots (`dispatch_command_with_snapshot`), object-safe views (`View<C>`), checkpoints (`KvCheckpointStore`), and parallel background workers (`CatchupWorker`). |
 | **Email**               | [`email-sender`](crates/email-sender/README.md)                               | [`crates/email-sender`](crates/email-sender/README.md)                               | Core traits, domain models (`Email`, `EmailAddress`, `Attachment`), fluent builder (`EmailBuilder`), and error definitions. Optional `MemoryEmailSender` behind `memory` feature.                                                                          |
 |                         | [`email-sender-resend`](crates/email-sender-resend/README.md)                 | [`crates/email-sender-resend`](crates/email-sender-resend/README.md)                 | Resend REST API integration backend.                                                                                                                                                                                                                       |

@@ -7,5 +7,5 @@ pub mod types;
 
 pub use crypto::{KEY_LEN, KeyRing, MasterKey, SecretCrypto, generate_dek};
 pub use errors::SecretError;
-pub use store::SecretStore;
+pub use store::{SecretStore, SecretStoreTx};
 pub use types::*;

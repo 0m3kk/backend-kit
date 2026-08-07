@@ -45,6 +45,53 @@ pub trait EventStore: Send + Sync {
     ) -> Result<Vec<SequencedEvent>, AppendError>;
 }
 
+/// Transactional event store operations.
+///
+/// `Conn` represents the connection or transaction handle type. The caller owns the
+/// transaction lifecycle — the store only executes operations through the provided handle.
+///
+/// Note: `read_tx` returns `Vec<SequencedEvent>` instead of a stream because streams
+/// cannot borrow from a connection handle (the stream is `'static`).
+#[async_trait]
+pub trait EventStoreTx<Conn: Send>: EventStore {
+    /// Reads sequenced events matching a Query using the provided connection handle.
+    async fn read_tx(
+        &self,
+        conn: &mut Conn,
+        query: &Query,
+        options: ReadOptions,
+    ) -> Result<Vec<SequencedEvent>, ReadError>;
+
+    /// Atomically appends events using the provided connection handle.
+    async fn append_tx(
+        &self,
+        conn: &mut Conn,
+        events: &[Event],
+        condition: Option<&AppendCondition>,
+    ) -> Result<Vec<SequencedEvent>, AppendError>;
+}
+
+#[async_trait]
+impl<T: EventStoreTx<Conn> + ?Sized, Conn: Send> EventStoreTx<Conn> for Arc<T> {
+    async fn read_tx(
+        &self,
+        conn: &mut Conn,
+        query: &Query,
+        options: ReadOptions,
+    ) -> Result<Vec<SequencedEvent>, ReadError> {
+        (**self).read_tx(conn, query, options).await
+    }
+
+    async fn append_tx(
+        &self,
+        conn: &mut Conn,
+        events: &[Event],
+        condition: Option<&AppendCondition>,
+    ) -> Result<Vec<SequencedEvent>, AppendError> {
+        (**self).append_tx(conn, events, condition).await
+    }
+}
+
 #[async_trait]
 impl<T: EventStore + ?Sized> EventStore for Arc<T> {
     async fn read(&self, query: &Query, options: ReadOptions) -> EventStream {
