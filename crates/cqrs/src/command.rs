@@ -1,6 +1,6 @@
 use event_sourcing::decision::DecisionModels;
 use event_sourcing::snapshot::{SnapshotError, SnapshotOptions};
-use event_sourcing::{AppendCondition, Event, EventStore, ReadError, SequencedEvent};
+use event_sourcing::{AppendCondition, Event, EventStore, EventStoreTx, ReadError, SequencedEvent};
 use kv_store::KvStore;
 use thiserror::Error;
 use tracing::{debug, error, info};
@@ -212,3 +212,169 @@ where
 
     Ok(appended)
 }
+
+/// Dispatches a command executing within an active transactional connection `conn: &mut Conn`:
+/// 1. `command.validate()`
+/// 2. `command.normalize()`
+/// 3. Hydrates decision models from `event_store` using `load_all_tx(conn)`
+/// 4. Executes domain decision `command.decide(&loaded.models, ctx)`
+/// 5. Appends generated events to `event_store` via `append_tx(conn, ...)` with optimistic concurrency boundary
+pub async fn dispatch_command_tx<Cmd, M, ES, Conn, C>(
+    mut command: Cmd,
+    event_store: &ES,
+    conn: &mut Conn,
+    ctx: &C,
+) -> Result<Vec<SequencedEvent>, Cmd::Error>
+where
+    Cmd: Command<M, C>,
+    M: DecisionModels,
+    ES: EventStoreTx<Conn>,
+    Conn: Send,
+{
+    let command_name = std::any::type_name::<Cmd>();
+    debug!(command_name = command_name, "Dispatching command within transaction");
+
+    // Step 1: Validate
+    if let Err(err) = command.validate() {
+        error!(command_name = command_name, "Command validation failed");
+        return Err(err);
+    }
+
+    // Step 2: Normalize
+    if let Err(err) = command.normalize() {
+        error!(command_name = command_name, "Command normalization failed");
+        return Err(err);
+    }
+
+    // Step 3: Hydrate Decision Models from Event Store within Transaction
+    let loaded = command.models().load_all_tx(event_store, conn).await.map_err(|e| {
+        error!(command_name = command_name, error = %e, "Failed to hydrate decision models within transaction");
+        Cmd::Error::from(CommandError::Load(e))
+    })?;
+
+    debug!(
+        command_name = command_name,
+        max_position = ?loaded.max_position,
+        "Decision models hydrated successfully within transaction"
+    );
+
+    // Step 4: Make Domain Decision
+    let events = command.decide(&loaded.models, ctx).inspect_err(|_err| {
+        error!(command_name = command_name, "Domain decision failed");
+    })?;
+
+    if events.is_empty() {
+        debug!(
+            command_name = command_name,
+            "Command generated 0 events; returning empty batch"
+        );
+        return Ok(Vec::new());
+    }
+
+    // Step 5: Save Events into Event Store with Dynamic Concurrency Protection within Transaction
+    let condition = AppendCondition::new(loaded.combined_query).after_opt(loaded.max_position);
+
+    let appended = event_store
+        .append_tx(conn, &events, Some(&condition))
+        .await
+        .map_err(|e| {
+            error!(command_name = command_name, error = %e, "Failed to append command events to EventStoreTx");
+            Cmd::Error::from(CommandError::Append(e))
+        })?;
+
+    info!(
+        command_name = command_name,
+        appended_count = appended.len(),
+        "Command executed and events committed successfully within transaction"
+    );
+
+    Ok(appended)
+}
+
+/// Dispatches a command executing within an active transactional connection `conn: &mut Conn`,
+/// hydrating decision models with KV Store snapshots if available via `load_all_with_snapshot_tx`,
+/// catching up remaining events within the transaction, and auto-updating snapshots when `snapshot_options.threshold` is reached.
+pub async fn dispatch_command_with_snapshot_tx<Cmd, M, ES, KV, Conn, C>(
+    mut command: Cmd,
+    event_store: &ES,
+    kv: &KV,
+    conn: &mut Conn,
+    snapshot_options: SnapshotOptions,
+    ctx: &C,
+) -> Result<Vec<SequencedEvent>, Cmd::Error>
+where
+    Cmd: Command<M, C>,
+    M: DecisionModels,
+    ES: EventStoreTx<Conn>,
+    KV: kv_store::KvStoreTx<Conn>,
+    Conn: Send,
+{
+    let command_name = std::any::type_name::<Cmd>();
+    debug!(
+        command_name = command_name,
+        threshold = snapshot_options.threshold,
+        "Dispatching command with snapshot loading within transaction"
+    );
+
+    // Step 1: Validate
+    if let Err(err) = command.validate() {
+        error!(command_name = command_name, "Command validation failed");
+        return Err(err);
+    }
+
+    // Step 2: Normalize
+    if let Err(err) = command.normalize() {
+        error!(command_name = command_name, "Command normalization failed");
+        return Err(err);
+    }
+
+    // Step 3: Hydrate Decision Models using KV Snapshots via load_all_with_snapshot_tx within Transaction (AUTOMATIC)
+    let loaded = command
+        .models()
+        .load_all_with_snapshot_tx(event_store, kv, conn, snapshot_options)
+        .await
+        .map_err(|e| {
+            error!(command_name = command_name, error = %e, "Failed to hydrate decision models with snapshot within transaction");
+            Cmd::Error::from(CommandError::Snapshot(e))
+        })?;
+
+    debug!(
+        command_name = command_name,
+        max_position = ?loaded.max_position,
+        "Snapshot decision models hydrated successfully within transaction"
+    );
+
+    // Step 4: Make Domain Decision
+    let events = command.decide(&loaded.models, ctx).inspect_err(|_err| {
+        error!(command_name = command_name, "Domain decision failed");
+    })?;
+
+    if events.is_empty() {
+        debug!(
+            command_name = command_name,
+            "Command generated 0 events; returning empty batch"
+        );
+        return Ok(Vec::new());
+    }
+
+    // Step 5: Save Events into Event Store with Dynamic Concurrency Protection within Transaction (AUTOMATIC)
+    let condition = AppendCondition::new(loaded.combined_query).after_opt(loaded.max_position);
+
+    let appended = event_store
+        .append_tx(conn, &events, Some(&condition))
+        .await
+        .map_err(|e| {
+            error!(command_name = command_name, error = %e, "Failed to append command events to EventStoreTx");
+            Cmd::Error::from(CommandError::Append(e))
+        })?;
+
+    info!(
+        command_name = command_name,
+        appended_count = appended.len(),
+        "Command executed with snapshot and events committed successfully within transaction"
+    );
+
+    Ok(appended)
+}
+
+

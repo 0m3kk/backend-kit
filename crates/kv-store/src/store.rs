@@ -87,7 +87,7 @@ impl<T: KvStore + ?Sized> KvStore for Arc<T> {
 /// The caller owns the connection/transaction lifecycle — the store only executes operations
 /// through the provided handle.
 #[async_trait]
-pub trait KvStoreTx<Conn: Send>: KvStore {
+pub trait KvStoreTx<Conn: Send>: Send + Sync {
     /// Retrieve a value by key using the provided connection handle.
     async fn get_tx(&self, conn: &mut Conn, key: &Key) -> Result<Option<Value>, KvError>;
 

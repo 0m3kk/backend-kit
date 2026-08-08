@@ -216,7 +216,7 @@ impl<S: KvStore> AttemptTracker for KvAttemptTracker<S> {
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl<Conn: Send, S: KvStoreTx<Conn>> AttemptTrackerTx<Conn> for KvAttemptTracker<S> {
+impl<Conn: Send, S: KvStore + KvStoreTx<Conn>> AttemptTrackerTx<Conn> for KvAttemptTracker<S> {
     async fn check_status_tx(
         &self,
         conn: &mut Conn,

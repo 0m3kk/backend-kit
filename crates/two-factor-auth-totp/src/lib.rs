@@ -296,7 +296,7 @@ impl<S: SecretStore> TwoFactorProvider for TotpTwoFactorAuth<S> {
 }
 
 #[async_trait]
-impl<Conn: Send, S: SecretStoreTx<Conn>> TwoFactorProviderTx<Conn> for TotpTwoFactorAuth<S> {
+impl<Conn: Send, S: SecretStore + SecretStoreTx<Conn>> TwoFactorProviderTx<Conn> for TotpTwoFactorAuth<S> {
     async fn issue_challenge_tx(
         &self,
         conn: &mut Conn,

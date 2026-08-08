@@ -59,7 +59,7 @@ impl<T: AttemptTracker + ?Sized> AttemptTracker for Arc<T> {
 /// `Conn` represents the connection or transaction handle type. The caller owns the
 /// transaction lifecycle — the tracker only executes operations through the provided handle.
 #[async_trait]
-pub trait AttemptTrackerTx<Conn: Send>: AttemptTracker {
+pub trait AttemptTrackerTx<Conn: Send>: Send + Sync {
     /// Check status of identifier within an external transaction.
     async fn check_status_tx(
         &self,

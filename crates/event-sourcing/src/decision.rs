@@ -4,8 +4,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 
-use crate::snapshot::{EventStoreSnapshotExt, SnapshotError, SnapshotOptions};
-use crate::store::{EventStore, ReadError};
+use crate::snapshot::{EventStoreSnapshotExt, EventStoreSnapshotTxExt, SnapshotError, SnapshotOptions};
+use crate::store::{EventStore, EventStoreTx, ReadError};
 use crate::types::{Event, Query, ReadOptions, SequencePosition, SequencedEvent};
 
 /// Trait implemented by domain decision models.
@@ -93,6 +93,22 @@ pub trait DecisionModels: Send + Sync + 'static {
         kv: &KV,
         options: SnapshotOptions,
     ) -> Result<LoadedModels<Self::Hydrated>, SnapshotError>;
+
+    /// Hydrates decision models within an active transaction handle using [`EventStoreTx`].
+    async fn load_all_tx<ES: EventStoreTx<Conn>, Conn: Send>(
+        self,
+        event_store: &ES,
+        conn: &mut Conn,
+    ) -> Result<LoadedModels<Self::Hydrated>, ReadError>;
+
+    /// Hydrates decision models using KV snapshots within an active transaction and catching up remaining events via [`EventStoreSnapshotTxExt`].
+    async fn load_all_with_snapshot_tx<ES: EventStoreTx<Conn>, KV: kv_store::KvStoreTx<Conn>, Conn: Send>(
+        self,
+        event_store: &ES,
+        kv: &KV,
+        conn: &mut Conn,
+        options: SnapshotOptions,
+    ) -> Result<LoadedModels<Self::Hydrated>, SnapshotError>;
 }
 
 // -----------------------------------------------------------------------------
@@ -129,6 +145,40 @@ where
         let query = self.0.query();
         let loaded = event_store
             .load_decision_model_with_snapshot(kv, self.0, options)
+            .await?;
+
+        Ok(LoadedModels {
+            models: loaded.model,
+            max_position: loaded.last_position,
+            combined_query: query,
+        })
+    }
+
+    async fn load_all_tx<ES: EventStoreTx<Conn>, Conn: Send>(
+        self,
+        event_store: &ES,
+        conn: &mut Conn,
+    ) -> Result<LoadedModels<Self::Hydrated>, ReadError> {
+        let query = self.0.query();
+        let loaded = event_store.load_decision_model_tx(conn, self.0).await?;
+
+        Ok(LoadedModels {
+            models: loaded.model,
+            max_position: loaded.last_position,
+            combined_query: query,
+        })
+    }
+
+    async fn load_all_with_snapshot_tx<ES: EventStoreTx<Conn>, KV: kv_store::KvStoreTx<Conn>, Conn: Send>(
+        self,
+        event_store: &ES,
+        kv: &KV,
+        conn: &mut Conn,
+        options: SnapshotOptions,
+    ) -> Result<LoadedModels<Self::Hydrated>, SnapshotError> {
+        let query = self.0.query();
+        let loaded = event_store
+            .load_decision_model_with_snapshot_tx(kv, conn, self.0, options)
             .await?;
 
         Ok(LoadedModels {
@@ -200,6 +250,56 @@ macro_rules! impl_decision_models_tuple {
                         combined_query,
                     })
                 }
+
+                async fn load_all_tx<ES: EventStoreTx<Conn>, Conn: Send>(
+                    self,
+                    event_store: &ES,
+                    conn: &mut Conn,
+                ) -> Result<LoadedModels<Self::Hydrated>, ReadError> {
+                    let combined_query = Query::combine(vec![ $( self.$idx.query() ),+ ]);
+
+                    let loaded = (
+                        $(
+                            event_store.load_decision_model_tx(conn, self.$idx).await?,
+                        )+
+                    );
+
+                    let positions = vec![ $( loaded.$idx.last_position ),+ ];
+                    let max_pos = positions.into_iter().flatten().max();
+
+                    Ok(LoadedModels {
+                        models: ( $( loaded.$idx.model, )+ ),
+                        max_position: max_pos,
+                        combined_query,
+                    })
+                }
+
+                async fn load_all_with_snapshot_tx<ES: EventStoreTx<Conn>, KV: kv_store::KvStoreTx<Conn>, Conn: Send>(
+                    self,
+                    event_store: &ES,
+                    kv: &KV,
+                    conn: &mut Conn,
+                    options: SnapshotOptions,
+                ) -> Result<LoadedModels<Self::Hydrated>, SnapshotError> {
+                    let combined_query = Query::combine(vec![ $( self.$idx.query() ),+ ]);
+
+                    let loaded = (
+                        $(
+                            Single(self.$idx)
+                                .load_all_with_snapshot_tx(event_store, kv, conn, options.clone())
+                                .await?,
+                        )+
+                    );
+
+                    let positions = vec![ $( loaded.$idx.max_position ),+ ];
+                    let max_pos = positions.into_iter().flatten().max();
+
+                    Ok(LoadedModels {
+                        models: ( $( loaded.$idx.models, )+ ),
+                        max_position: max_pos,
+                        combined_query,
+                    })
+                }
             }
         )+
     };
@@ -233,3 +333,27 @@ pub trait EventStoreExt: EventStore {
 }
 
 impl<T: EventStore + ?Sized> EventStoreExt for T {}
+
+/// Extension trait for [`EventStoreTx`] to support transactional decision model hydration.
+#[async_trait]
+pub trait EventStoreTxExt<Conn: Send>: EventStoreTx<Conn> {
+    /// Hydrates a decision model instance from the transactional store and returns a [`LoadedModel<M>`].
+    async fn load_decision_model_tx<M: DecisionModel>(
+        &self,
+        conn: &mut Conn,
+        model: M,
+    ) -> Result<LoadedModel<M>, ReadError> {
+        let mut loaded = LoadedModel::new(model);
+        let query = loaded.model.query();
+        let events = self.read_tx(conn, &query, ReadOptions::default()).await?;
+
+        for seq_event in events {
+            loaded.apply_sequenced(&seq_event);
+        }
+
+        Ok(loaded)
+    }
+}
+
+impl<T: EventStoreTx<Conn> + ?Sized, Conn: Send> EventStoreTxExt<Conn> for T {}
+

@@ -32,7 +32,7 @@ pub trait TwoFactorProvider: Send + Sync {
 /// (e.g., SMS, Email) are excluded because sending messages within a database transaction
 /// is unsafe — if the transaction rolls back, the message was already delivered.
 #[async_trait]
-pub trait TwoFactorProviderTx<Conn: Send>: TwoFactorProvider {
+pub trait TwoFactorProviderTx<Conn: Send>: Send + Sync {
     /// Issue a new 2FA challenge within an external transaction.
     async fn issue_challenge_tx(
         &self,
