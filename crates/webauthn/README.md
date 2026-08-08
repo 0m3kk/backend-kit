@@ -13,6 +13,7 @@ Production-grade WebAuthn / Passkeys primary passwordless authentication engine 
 - **SecretStore Integration**: Encrypts and stores user passkey credentials securely in `SecretStore`.
 - **Replay Protection**: Validates passkey signature counters against credential clone attacks.
 - **Passkey Lifecycle Management**: Easily list, query, and revoke passkeys per user.
+- **Transactional API (`_tx` methods)**: `finish_registration_tx`, `start_authentication_tx`, `finish_authentication_tx`, `list_passkeys_tx`, and `delete_passkey_tx` accept an external `&mut Conn` via `SecretStoreTx<Conn>`, allowing passkey operations to participate in broader database transactions.
 
 ## Usage
 

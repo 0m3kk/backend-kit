@@ -179,9 +179,15 @@ impl<S: SecretStore> BackupCodeTwoFactorAuth<S> {
             .map_err(|e| TwoFactorError::InvalidSecret(e.to_string()))?;
         let value = SecretValue::from(set.hashed_codes.join(","));
 
-        <S as SecretStoreTx<Conn>>::set_tx(&*self.store, conn, path, value, SetSecretOptions::default())
-            .await
-            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+        <S as SecretStoreTx<Conn>>::set_tx(
+            &*self.store,
+            conn,
+            path,
+            value,
+            SetSecretOptions::default(),
+        )
+        .await
+        .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
 
         Ok(set)
     }

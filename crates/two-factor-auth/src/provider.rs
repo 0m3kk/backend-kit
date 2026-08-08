@@ -87,6 +87,8 @@ impl<T: TwoFactorProviderTx<Conn> + ?Sized, Conn: Send> TwoFactorProviderTx<Conn
         context_secret: &str,
         response: &TwoFactorResponse,
     ) -> Result<bool, TwoFactorError> {
-        (**self).verify_response_tx(conn, context_secret, response).await
+        (**self)
+            .verify_response_tx(conn, context_secret, response)
+            .await
     }
 }

@@ -1,4 +1,4 @@
-use secret_store::{SecretPath, SecretStore, SecretValue, SetSecretOptions};
+use secret_store::{SecretPath, SecretStore, SecretStoreTx, SecretValue, SetSecretOptions};
 use std::sync::Arc;
 use url::Url;
 use webauthn_rs::prelude::*;
@@ -252,6 +252,189 @@ impl<S: SecretStore> WebAuthnAuthenticator<S> {
 
         self.store
             .delete(&path)
+            .await
+            .map_err(|e| WebAuthnError::StoreError(e.to_string()))
+    }
+
+    // -----------------------------------------------------------------------
+    // Transactional methods (uses SecretStoreTx<Conn> trait)
+    // -----------------------------------------------------------------------
+
+    /// Complete Passkey registration within an external transaction.
+    pub async fn finish_registration_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+        res: &RegisterPublicKeyCredential,
+        state: &PasskeyRegistration,
+    ) -> Result<Passkey, WebAuthnError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let passkey = self
+            .webauthn
+            .finish_passkey_registration(res, state)
+            .map_err(|e| WebAuthnError::ProtocolError(e.to_string()))?;
+
+        let cred_id_hex = hex_encode(passkey.cred_id().as_slice());
+        let path = SecretPath::new(format!("webauthn/passkey/{user_id}/{cred_id_hex}"))
+            .map_err(|e| WebAuthnError::StoreError(e.to_string()))?;
+
+        let json = serde_json::to_string(&passkey)
+            .map_err(|e| WebAuthnError::SerializationError(e.to_string()))?;
+
+        <S as SecretStoreTx<Conn>>::set_tx(
+            &*self.store,
+            conn,
+            path,
+            SecretValue::from(json),
+            SetSecretOptions::default(),
+        )
+        .await
+        .map_err(|e| WebAuthnError::StoreError(e.to_string()))?;
+
+        Ok(passkey)
+    }
+
+    /// Start WebAuthn Passkey authentication within an external transaction.
+    pub async fn start_authentication_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+    ) -> Result<(RequestChallengeResponse, PasskeyAuthentication), WebAuthnError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        self.start_authentication_with_policy_tx(conn, user_id, &self.config.policy)
+            .await
+    }
+
+    /// Start WebAuthn Passkey authentication with a custom policy within an external transaction.
+    pub async fn start_authentication_with_policy_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+        policy: &WebAuthnPolicy,
+    ) -> Result<(RequestChallengeResponse, PasskeyAuthentication), WebAuthnError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let passkeys = self.list_passkeys_tx(conn, user_id).await?;
+        if passkeys.is_empty() {
+            return Err(WebAuthnError::PasskeyNotFound(format!(
+                "No passkeys registered for user {user_id}"
+            )));
+        }
+
+        let (mut challenge, state) = self
+            .webauthn
+            .start_passkey_authentication(&passkeys)
+            .map_err(|e| WebAuthnError::ProtocolError(e.to_string()))?;
+
+        challenge.public_key.user_verification = policy.user_verification;
+        challenge.public_key.timeout = Some(policy.timeout_ms);
+
+        Ok((challenge, state))
+    }
+
+    /// Complete WebAuthn Passkey authentication within an external transaction.
+    pub async fn finish_authentication_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+        res: &PublicKeyCredential,
+        state: &PasskeyAuthentication,
+    ) -> Result<AuthenticationResult, WebAuthnError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let auth_result = self
+            .webauthn
+            .finish_passkey_authentication(res, state)
+            .map_err(|e| WebAuthnError::ProtocolError(e.to_string()))?;
+
+        let cred_id_hex = hex_encode(res.id.as_bytes());
+        let path = SecretPath::new(format!("webauthn/passkey/{user_id}/{cred_id_hex}"))
+            .map_err(|e| WebAuthnError::StoreError(e.to_string()))?;
+
+        let passkeys = self.list_passkeys_tx(conn, user_id).await?;
+        if let Some(mut updated_passkey) = passkeys
+            .into_iter()
+            .find(|pk| pk.cred_id() == res.id.as_bytes())
+        {
+            updated_passkey.update_credential(&auth_result);
+            let json = serde_json::to_string(&updated_passkey)
+                .map_err(|e| WebAuthnError::SerializationError(e.to_string()))?;
+
+            <S as SecretStoreTx<Conn>>::set_tx(
+                &*self.store,
+                conn,
+                path,
+                SecretValue::from(json),
+                SetSecretOptions::default(),
+            )
+            .await
+            .map_err(|e| WebAuthnError::StoreError(e.to_string()))?;
+        }
+
+        Ok(auth_result)
+    }
+
+    /// List all active registered Passkeys for a user within an external transaction.
+    pub async fn list_passkeys_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+    ) -> Result<Vec<Passkey>, WebAuthnError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let prefix = SecretPath::new(format!("webauthn/passkey/{user_id}/"))
+            .map_err(|e| WebAuthnError::StoreError(e.to_string()))?;
+
+        let options = secret_store::ListSecretOptions::default().with_prefix(prefix);
+        let headers = <S as SecretStoreTx<Conn>>::list_tx(&*self.store, conn, options)
+            .await
+            .map_err(|e| WebAuthnError::StoreError(e.to_string()))?;
+
+        let mut passkeys = Vec::new();
+        for header in headers {
+            if let Ok(Some(entry)) =
+                <S as SecretStoreTx<Conn>>::get_tx(&*self.store, conn, &header.path).await
+            {
+                let passkey_res = entry
+                    .value
+                    .as_str()
+                    .map_err(|e| WebAuthnError::StoreError(e.to_string()))
+                    .and_then(|val_str| {
+                        serde_json::from_str::<Passkey>(val_str)
+                            .map_err(|e| WebAuthnError::SerializationError(e.to_string()))
+                    });
+
+                if let Ok(passkey) = passkey_res {
+                    passkeys.push(passkey);
+                }
+            }
+        }
+
+        Ok(passkeys)
+    }
+
+    /// Delete a registered Passkey within an external transaction.
+    pub async fn delete_passkey_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+        cred_id: &[u8],
+    ) -> Result<bool, WebAuthnError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let cred_id_hex = hex_encode(cred_id);
+        let path = SecretPath::new(format!("webauthn/passkey/{user_id}/{cred_id_hex}"))
+            .map_err(|e| WebAuthnError::StoreError(e.to_string()))?;
+
+        <S as SecretStoreTx<Conn>>::delete_tx(&*self.store, conn, &path)
             .await
             .map_err(|e| WebAuthnError::StoreError(e.to_string()))
     }
