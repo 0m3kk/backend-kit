@@ -443,3 +443,34 @@ impl<S: SecretStore> WebAuthnAuthenticator<S> {
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hex_encode_basic() {
+        assert_eq!(hex_encode(&[0xab, 0xcd, 0xef]), "abcdef");
+    }
+
+    #[test]
+    fn test_hex_encode_zeros() {
+        assert_eq!(hex_encode(&[0x00, 0x00]), "0000");
+    }
+
+    #[test]
+    fn test_hex_encode_ff() {
+        assert_eq!(hex_encode(&[0xff, 0xff]), "ffff");
+    }
+
+    #[test]
+    fn test_hex_encode_empty() {
+        assert_eq!(hex_encode(&[]), "");
+    }
+
+    #[test]
+    fn test_hex_encode_single_byte() {
+        assert_eq!(hex_encode(&[0x0a]), "0a");
+        assert_eq!(hex_encode(&[0x10]), "10");
+    }
+}

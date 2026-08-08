@@ -101,3 +101,82 @@ async fn test_passkey_list_and_delete() {
     let deleted = auth.delete_passkey(user_id, b"non_existent").await.unwrap();
     assert!(!deleted);
 }
+
+#[test]
+fn test_webauthn_policy_strict_platform() {
+    let policy = WebAuthnPolicy::strict_platform();
+    assert_eq!(policy.user_verification, UserVerificationPolicy::Required);
+    assert_eq!(
+        policy.authenticator_attachment,
+        Some(AuthenticatorAttachment::Platform)
+    );
+    assert_eq!(policy.resident_key, ResidentKeyRequirement::Required);
+}
+
+#[test]
+fn test_webauthn_policy_flexible() {
+    let policy = WebAuthnPolicy::flexible();
+    assert_eq!(policy.user_verification, UserVerificationPolicy::Preferred);
+    assert!(policy.authenticator_attachment.is_none());
+    assert_eq!(policy.resident_key, ResidentKeyRequirement::Preferred);
+}
+
+#[test]
+fn test_webauthn_policy_builder_platform_only() {
+    let policy = WebAuthnPolicy::builder().platform_only().build();
+    assert_eq!(
+        policy.authenticator_attachment,
+        Some(AuthenticatorAttachment::Platform)
+    );
+    assert_eq!(policy.user_verification, UserVerificationPolicy::Required);
+}
+
+#[test]
+fn test_webauthn_policy_builder_cross_platform_only() {
+    let policy = WebAuthnPolicy::builder().cross_platform_only().build();
+    assert_eq!(
+        policy.authenticator_attachment,
+        Some(AuthenticatorAttachment::CrossPlatform)
+    );
+}
+
+#[test]
+fn test_webauthn_policy_builder_require_resident_key() {
+    let required = WebAuthnPolicy::builder().require_resident_key(true).build();
+    assert_eq!(required.resident_key, ResidentKeyRequirement::Required);
+
+    let discouraged = WebAuthnPolicy::builder()
+        .require_resident_key(false)
+        .build();
+    assert_eq!(
+        discouraged.resident_key,
+        ResidentKeyRequirement::Discouraged
+    );
+}
+
+#[test]
+fn test_webauthn_policy_builder_timeout() {
+    let policy = WebAuthnPolicy::builder().timeout_ms(120_000).build();
+    assert_eq!(policy.timeout_ms, 120_000);
+}
+
+#[test]
+fn test_webauthn_config_new_defaults() {
+    let config = WebAuthnConfig::new("example.com", "https://example.com", "My App");
+    assert_eq!(config.rp_id, "example.com");
+    assert_eq!(config.rp_origin, "https://example.com");
+    assert_eq!(config.rp_name, "My App");
+    // Default policy
+    assert_eq!(
+        config.policy.user_verification,
+        UserVerificationPolicy::Preferred
+    );
+}
+
+#[tokio::test]
+async fn test_webauthn_authenticator_invalid_origin() {
+    let store = create_test_setup();
+    let config = WebAuthnConfig::new("localhost", "not-a-valid-url", "Test App");
+    let result = WebAuthnAuthenticator::new(store, config);
+    assert!(result.is_err());
+}

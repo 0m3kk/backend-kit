@@ -303,3 +303,69 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
     }
     result == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mask_email_standard() {
+        let masked = mask_email("alice@example.com");
+        assert_eq!(masked, "ae***@example.com");
+    }
+
+    #[test]
+    fn test_mask_email_short_name() {
+        let masked = mask_email("ab@example.com");
+        assert_eq!(masked, "a***@example.com");
+    }
+
+    #[test]
+    fn test_mask_email_single_char_name() {
+        let masked = mask_email("a@example.com");
+        assert_eq!(masked, "a***@example.com");
+    }
+
+    #[test]
+    fn test_mask_email_invalid_no_at() {
+        let masked = mask_email("no-at-sign");
+        assert_eq!(masked, "***@***");
+    }
+
+    #[test]
+    fn test_generate_numeric_code_length() {
+        let code = generate_numeric_code(6);
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()));
+
+        let code8 = generate_numeric_code(8);
+        assert_eq!(code8.len(), 8);
+        assert!(code8.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_generate_numeric_code_zero_length() {
+        let code = generate_numeric_code(0);
+        assert!(code.is_empty());
+    }
+
+    #[test]
+    fn test_constant_time_compare_equal() {
+        assert!(constant_time_compare("abc123", "abc123"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_not_equal() {
+        assert!(!constant_time_compare("abc123", "abc124"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_different_lengths() {
+        assert!(!constant_time_compare("short", "longer_string"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_empty() {
+        assert!(constant_time_compare("", ""));
+    }
+}

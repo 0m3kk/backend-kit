@@ -263,3 +263,69 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
     }
     result == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mask_phone_standard() {
+        let masked = mask_phone("+15551234567");
+        assert_eq!(masked, "+*****4567");
+    }
+
+    #[test]
+    fn test_mask_phone_short() {
+        let masked = mask_phone("1234");
+        assert_eq!(masked, "****");
+    }
+
+    #[test]
+    fn test_mask_phone_very_short() {
+        let masked = mask_phone("12");
+        assert_eq!(masked, "****");
+    }
+
+    #[test]
+    fn test_mask_phone_with_whitespace() {
+        let masked = mask_phone("  +15551234567  ");
+        assert_eq!(masked, "+*****4567");
+    }
+
+    #[test]
+    fn test_generate_numeric_code_length() {
+        let code = generate_numeric_code(6);
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()));
+
+        let code8 = generate_numeric_code(8);
+        assert_eq!(code8.len(), 8);
+        assert!(code8.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_generate_numeric_code_zero_length() {
+        let code = generate_numeric_code(0);
+        assert!(code.is_empty());
+    }
+
+    #[test]
+    fn test_constant_time_compare_equal() {
+        assert!(constant_time_compare("abc123", "abc123"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_not_equal() {
+        assert!(!constant_time_compare("abc123", "abc124"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_different_lengths() {
+        assert!(!constant_time_compare("short", "longer_string"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_empty() {
+        assert!(constant_time_compare("", ""));
+    }
+}

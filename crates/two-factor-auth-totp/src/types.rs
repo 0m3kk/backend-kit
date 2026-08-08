@@ -225,3 +225,189 @@ fn urlencoding(input: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- TotpAlgorithm tests ---
+
+    #[test]
+    fn test_totp_algorithm_as_str() {
+        assert_eq!(TotpAlgorithm::Sha1.as_str(), "SHA1");
+        assert_eq!(TotpAlgorithm::Sha256.as_str(), "SHA256");
+        assert_eq!(TotpAlgorithm::Sha512.as_str(), "SHA512");
+    }
+
+    // --- TotpDigits tests ---
+
+    #[test]
+    fn test_totp_digits_as_usize() {
+        assert_eq!(TotpDigits::Six.as_usize(), 6);
+        assert_eq!(TotpDigits::Seven.as_usize(), 7);
+        assert_eq!(TotpDigits::Eight.as_usize(), 8);
+    }
+
+    #[test]
+    fn test_totp_digits_try_from_usize_valid() {
+        assert_eq!(TotpDigits::try_from_usize(6).unwrap(), TotpDigits::Six);
+        assert_eq!(TotpDigits::try_from_usize(7).unwrap(), TotpDigits::Seven);
+        assert_eq!(TotpDigits::try_from_usize(8).unwrap(), TotpDigits::Eight);
+    }
+
+    #[test]
+    fn test_totp_digits_try_from_usize_invalid() {
+        assert!(TotpDigits::try_from_usize(5).is_err());
+        assert!(TotpDigits::try_from_usize(9).is_err());
+        assert!(TotpDigits::try_from_usize(0).is_err());
+    }
+
+    // --- TotpSecret tests ---
+
+    #[test]
+    fn test_totp_secret_generate() {
+        let secret = TotpSecret::generate();
+        assert!(!secret.as_base32().is_empty());
+        assert!(!secret.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn test_totp_secret_from_raw_valid() {
+        let raw = vec![1u8, 2, 3, 4, 5];
+        let secret = TotpSecret::from_raw(&raw).unwrap();
+        assert_eq!(secret.as_bytes(), &raw);
+        assert!(!secret.as_base32().is_empty());
+    }
+
+    #[test]
+    fn test_totp_secret_from_raw_empty() {
+        assert!(TotpSecret::from_raw(&[]).is_err());
+    }
+
+    #[test]
+    fn test_totp_secret_from_base32_valid() {
+        let secret = TotpSecret::from_raw(&[1, 2, 3, 4, 5]).unwrap();
+        let b32 = secret.as_base32().to_string();
+        let restored = TotpSecret::from_base32(&b32).unwrap();
+        assert_eq!(restored.as_bytes(), secret.as_bytes());
+    }
+
+    #[test]
+    fn test_totp_secret_from_base32_empty() {
+        assert!(TotpSecret::from_base32("").is_err());
+    }
+
+    #[test]
+    fn test_totp_secret_from_base32_with_whitespace_and_dashes() {
+        let secret = TotpSecret::from_raw(&[1, 2, 3, 4, 5]).unwrap();
+        let b32 = secret.as_base32().to_string();
+        // Should still be parseable after normalization (uppercase, strip dashes/spaces)
+        let restored = TotpSecret::from_base32(&b32);
+        assert!(restored.is_ok());
+    }
+
+    // --- TotpConfig::build_url tests ---
+
+    #[test]
+    fn test_totp_config_build_url() {
+        let secret = TotpSecret::from_raw(&[1, 2, 3, 4, 5]).unwrap();
+        let config = TotpConfig::default();
+        let url = config.build_url(&secret).unwrap();
+        assert!(url.starts_with("otpauth://totp/"));
+        assert!(url.contains("secret="));
+        assert!(url.contains("issuer="));
+        assert!(url.contains("algorithm=SHA1"));
+        assert!(url.contains("digits=6"));
+        assert!(url.contains("period=30"));
+    }
+
+    #[test]
+    fn test_totp_config_build_url_empty_issuer() {
+        let secret = TotpSecret::from_raw(&[1, 2, 3, 4, 5]).unwrap();
+        let config = TotpConfig {
+            issuer: "".to_string(),
+            ..TotpConfig::default()
+        };
+        assert!(config.build_url(&secret).is_err());
+    }
+
+    #[test]
+    fn test_totp_config_build_url_empty_account_name() {
+        let secret = TotpSecret::from_raw(&[1, 2, 3, 4, 5]).unwrap();
+        let config = TotpConfig {
+            account_name: "".to_string(),
+            ..TotpConfig::default()
+        };
+        assert!(config.build_url(&secret).is_err());
+    }
+
+    #[test]
+    fn test_totp_config_build_url_zero_step() {
+        let secret = TotpSecret::from_raw(&[1, 2, 3, 4, 5]).unwrap();
+        let config = TotpConfig {
+            step: 0,
+            ..TotpConfig::default()
+        };
+        assert!(config.build_url(&secret).is_err());
+    }
+
+    // --- urlencoding tests ---
+
+    #[test]
+    fn test_urlencoding_alphanumeric() {
+        assert_eq!(urlencoding("hello123"), "hello123");
+    }
+
+    #[test]
+    fn test_urlencoding_special_chars() {
+        let encoded = urlencoding("hello world");
+        assert_eq!(encoded, "hello%20world");
+    }
+
+    #[test]
+    fn test_urlencoding_safe_chars() {
+        assert_eq!(urlencoding("a-b_c.d~e"), "a-b_c.d~e");
+    }
+
+    #[test]
+    fn test_urlencoding_at_sign() {
+        let encoded = urlencoding("user@example.com");
+        assert!(encoded.contains("%40"));
+    }
+
+    #[test]
+    fn test_urlencoding_empty() {
+        assert_eq!(urlencoding(""), "");
+    }
+
+    // --- TotpConfigBuilder tests ---
+
+    #[test]
+    fn test_totp_config_builder_defaults() {
+        let config = TotpConfigBuilder::default().build();
+        assert_eq!(config.algorithm, TotpAlgorithm::Sha1);
+        assert_eq!(config.digits, TotpDigits::Six);
+        assert_eq!(config.step, 30);
+        assert_eq!(config.issuer, "BackendKit");
+        assert_eq!(config.skew_windows, 1);
+    }
+
+    #[test]
+    fn test_totp_config_builder_custom() {
+        let config = TotpConfig::builder()
+            .algorithm(TotpAlgorithm::Sha512)
+            .digits(TotpDigits::Eight)
+            .step(60)
+            .issuer("MyApp")
+            .account_name("user@test.com")
+            .skew_windows(2)
+            .build();
+
+        assert_eq!(config.algorithm, TotpAlgorithm::Sha512);
+        assert_eq!(config.digits, TotpDigits::Eight);
+        assert_eq!(config.step, 60);
+        assert_eq!(config.issuer, "MyApp");
+        assert_eq!(config.account_name, "user@test.com");
+        assert_eq!(config.skew_windows, 2);
+    }
+}

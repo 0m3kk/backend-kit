@@ -341,3 +341,34 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
     }
     result == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constant_time_compare_equal() {
+        assert!(constant_time_compare("abc123", "abc123"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_not_equal() {
+        assert!(!constant_time_compare("abc123", "abc124"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_different_lengths() {
+        assert!(!constant_time_compare("short", "longer_string"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_empty() {
+        assert!(constant_time_compare("", ""));
+    }
+
+    #[test]
+    fn test_constant_time_compare_single_char_diff() {
+        assert!(!constant_time_compare("a", "b"));
+        assert!(constant_time_compare("a", "a"));
+    }
+}
