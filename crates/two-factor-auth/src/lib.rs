@@ -7,5 +7,5 @@ pub mod types;
 pub use errors::TwoFactorError;
 #[cfg(feature = "memory")]
 pub use memory::MemoryTwoFactorAuth;
-pub use provider::TwoFactorProvider;
+pub use provider::{TwoFactorProvider, TwoFactorProviderTx};
 pub use types::{BackupCode, TwoFactorChallenge, TwoFactorMethod, TwoFactorResponse};

@@ -5,7 +5,7 @@ pub use two_factor_auth::*;
 pub use types::{TotpAlgorithm, TotpConfig, TotpConfigBuilder, TotpDigits, TotpSecret};
 
 use async_trait::async_trait;
-use secret_store::{SecretPath, SecretStore, SecretValue, SetSecretOptions};
+use secret_store::{SecretPath, SecretStore, SecretStoreTx, SecretValue, SetSecretOptions};
 use totp_rs::{Algorithm as TotpRsAlgorithm, Secret as TotpRsSecret, Totp as TotpRs};
 
 /// Production implementation of 2FA / TOTP authentication backed by `totp-rs` and `SecretStore`.
@@ -178,6 +178,80 @@ impl<S: SecretStore> TotpTwoFactorAuth<S> {
             .await
             .map_err(|e| TwoFactorError::CryptoError(e.to_string()))
     }
+
+    // -----------------------------------------------------------------------
+    // Transactional methods (uses SecretStoreTx<Conn> trait)
+    // -----------------------------------------------------------------------
+
+    /// Enroll a user within an external transaction.
+    pub async fn enroll_user_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+    ) -> Result<(TotpSecret, String), TwoFactorError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let secret = self.generate_secret()?;
+        let path = SecretPath::new(format!("2fa/totp/{user_id}"))
+            .map_err(|e| TwoFactorError::InvalidSecret(e.to_string()))?;
+        let value = SecretValue::from(secret.as_base32());
+
+        <S as SecretStoreTx<Conn>>::set_tx(&*self.store, conn, path, value, SetSecretOptions::default())
+            .await
+            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+
+        let url = self.build_otpauth_url(&secret, &self.config)?;
+        Ok((secret, url))
+    }
+
+    /// Verify a user's TOTP token within an external transaction.
+    pub async fn verify_user_token_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+        token: &str,
+        timestamp: u64,
+    ) -> Result<bool, TwoFactorError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let path = SecretPath::new(format!("2fa/totp/{user_id}"))
+            .map_err(|e| TwoFactorError::InvalidSecret(e.to_string()))?;
+
+        let entry = <S as SecretStoreTx<Conn>>::get_tx(&*self.store, conn, &path)
+            .await
+            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+
+        let entry = match entry {
+            Some(e) => e,
+            None => return Ok(false),
+        };
+
+        let secret_str = entry
+            .value
+            .as_str()
+            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+        let secret = TotpSecret::from_base32(secret_str)?;
+        self.verify_token(&secret, token, timestamp, self.config.skew_windows)
+    }
+
+    /// Revoke a user's TOTP secret within an external transaction.
+    pub async fn revoke_user_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+    ) -> Result<bool, TwoFactorError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let path = SecretPath::new(format!("2fa/totp/{user_id}"))
+            .map_err(|e| TwoFactorError::InvalidSecret(e.to_string()))?;
+
+        <S as SecretStoreTx<Conn>>::delete_tx(&*self.store, conn, &path)
+            .await
+            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))
+    }
 }
 
 #[async_trait]
@@ -211,6 +285,39 @@ impl<S: SecretStore> TwoFactorProvider for TotpTwoFactorAuth<S> {
             .as_secs();
 
         self.verify_user_token(user_identifier, &response.response_data, now)
+            .await
+    }
+}
+
+#[async_trait]
+impl<Conn: Send, S: SecretStoreTx<Conn>> TwoFactorProviderTx<Conn> for TotpTwoFactorAuth<S> {
+    async fn issue_challenge_tx(
+        &self,
+        conn: &mut Conn,
+        user_identifier: &str,
+    ) -> Result<TwoFactorChallenge, TwoFactorError> {
+        let (_secret, url) = self.enroll_user_tx(conn, user_identifier).await?;
+
+        let challenge_id = format!("totp_{user_identifier}");
+        Ok(TwoFactorChallenge::new(challenge_id, TwoFactorMethod::Totp).with_payload(url))
+    }
+
+    async fn verify_response_tx(
+        &self,
+        conn: &mut Conn,
+        user_identifier: &str,
+        response: &TwoFactorResponse,
+    ) -> Result<bool, TwoFactorError> {
+        if response.method != TwoFactorMethod::Totp {
+            return Ok(false);
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| TwoFactorError::TimeError(e.to_string()))?
+            .as_secs();
+
+        self.verify_user_token_tx(conn, user_identifier, &response.response_data, now)
             .await
     }
 }

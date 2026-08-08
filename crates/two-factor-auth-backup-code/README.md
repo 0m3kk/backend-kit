@@ -12,6 +12,7 @@ Production-grade Backup / Recovery Code 2FA backend for `backend-kit`.
 - **Single-Use Consumption**: `verify_and_consume` invalidates used backup codes and returns the updated set of remaining active code hashes.
 - **Generic 2FA Integration**: Implements `TwoFactorProvider` for unified multi-factor authentication pipelines.
 - **Format Normalization**: Automatically handles whitespace, dashes, and casing during code entry (e.g. `a1b2-c3d4` vs `A1B2C3D4`).
+- **Transactional API (`TwoFactorProviderTx<Conn>`)**: Implements `TwoFactorProviderTx` with `issue_challenge_tx` and `verify_response_tx` accepting an external `&mut Conn` via `SecretStoreTx<Conn>`. Also exposes granular `_tx` methods (`enroll_user_tx`, `verify_and_consume_user_code_tx`, `revoke_user_tx`) for direct use.
 
 ## Usage
 

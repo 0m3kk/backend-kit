@@ -9,6 +9,7 @@ Core generic traits, domain models, error definitions, and in-memory mock for Tw
 ## Key Features
 
 - **Generic Provider Trait**: [`TwoFactorProvider`](src/provider.rs) defining `issue_challenge`, `verify_response`, and `method()`.
+- **Transactional Provider Trait**: [`TwoFactorProviderTx<Conn>`](src/provider.rs) extending `TwoFactorProvider` with `issue_challenge_tx` and `verify_response_tx` for providers backed by transactional stores. Providers with external side effects (SMS, Email) are excluded.
 - **2FA Primitives**: `TwoFactorMethod` (`Totp`, `SmsOtp`, `EmailOtp`, `BackupCode`), `TwoFactorChallenge`, `TwoFactorResponse`.
 - **Recovery Utilities**: `BackupCode` generator & normalizer.
 - **In-Memory Mocking**: `MemoryTwoFactorAuth` behind `memory` feature flag for unit testing.
