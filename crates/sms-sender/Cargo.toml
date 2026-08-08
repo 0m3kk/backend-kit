@@ -1,6 +1,6 @@
 [package]
 name = "sms-sender"
-version = "1.1.0"
+version = "0.1.0"
 edition = "2024"
 description = "Core traits, domain models, and in-memory provider for SMS sending in backend-kit."
 

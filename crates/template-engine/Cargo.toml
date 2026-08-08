@@ -1,6 +1,6 @@
 [package]
 name = "template-engine"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "Core traits, context builder, and error definitions for generic template rendering in backend-kit."
 

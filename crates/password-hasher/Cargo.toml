@@ -1,6 +1,6 @@
 [package]
 name = "password-hasher"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "Core traits, types, and errors for password hashing. Algorithm implementations (argon2, bcrypt) live in separate crates."
 

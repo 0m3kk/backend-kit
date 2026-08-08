@@ -1,6 +1,6 @@
 [package]
 name = "email-sender-smtp"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "SMTP email sender implementation using lettre for backend-kit."
 

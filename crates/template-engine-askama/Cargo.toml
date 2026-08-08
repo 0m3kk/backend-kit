@@ -1,6 +1,6 @@
 [package]
 name = "template-engine-askama"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "Askama (compile-time HTML templates) implementation of TemplateEngine for backend-kit."
 
