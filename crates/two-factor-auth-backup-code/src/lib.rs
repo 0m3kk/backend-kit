@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use secret_store::{SecretPath, SecretStore, SecretValue, SetSecretOptions};
+use secret_store::{SecretPath, SecretStore, SecretStoreTx, SecretValue, SetSecretOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -159,6 +159,114 @@ impl<S: SecretStore> BackupCodeTwoFactorAuth<S> {
             .await
             .map_err(|e| TwoFactorError::CryptoError(e.to_string()))
     }
+
+    // -----------------------------------------------------------------------
+    // Transactional methods (uses SecretStoreTx<Conn> trait)
+    // -----------------------------------------------------------------------
+
+    /// Enroll a user within an external transaction.
+    pub async fn enroll_user_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+        count: usize,
+    ) -> Result<BackupCodeSet, TwoFactorError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let set = self.generate_codes(count);
+        let path = SecretPath::new(format!("2fa/backup/{user_id}"))
+            .map_err(|e| TwoFactorError::InvalidSecret(e.to_string()))?;
+        let value = SecretValue::from(set.hashed_codes.join(","));
+
+        <S as SecretStoreTx<Conn>>::set_tx(
+            &*self.store,
+            conn,
+            path,
+            value,
+            SetSecretOptions::default(),
+        )
+        .await
+        .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+
+        Ok(set)
+    }
+
+    /// Verify and consume a backup code within an external transaction.
+    pub async fn verify_and_consume_user_code_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+        submitted_code: &str,
+    ) -> Result<bool, TwoFactorError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let path = SecretPath::new(format!("2fa/backup/{user_id}"))
+            .map_err(|e| TwoFactorError::InvalidSecret(e.to_string()))?;
+
+        let entry = <S as SecretStoreTx<Conn>>::get_tx(&*self.store, conn, &path)
+            .await
+            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+
+        let entry = match entry {
+            Some(e) => e,
+            None => return Ok(false),
+        };
+
+        let value_str = entry
+            .value
+            .as_str()
+            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+
+        let hashed_codes: Vec<String> = value_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let consumed_res = self.verify_and_consume(submitted_code, &hashed_codes)?;
+
+        match consumed_res {
+            Some(remaining) => {
+                if remaining.is_empty() {
+                    <S as SecretStoreTx<Conn>>::delete_tx(&*self.store, conn, &path)
+                        .await
+                        .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+                } else {
+                    let new_value = SecretValue::from(remaining.join(","));
+                    <S as SecretStoreTx<Conn>>::set_tx(
+                        &*self.store,
+                        conn,
+                        path,
+                        new_value,
+                        SetSecretOptions::default(),
+                    )
+                    .await
+                    .map_err(|e| TwoFactorError::CryptoError(e.to_string()))?;
+                }
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Revoke a user's backup codes within an external transaction.
+    pub async fn revoke_user_tx<Conn: Send>(
+        &self,
+        conn: &mut Conn,
+        user_id: &str,
+    ) -> Result<bool, TwoFactorError>
+    where
+        S: SecretStoreTx<Conn>,
+    {
+        let path = SecretPath::new(format!("2fa/backup/{user_id}"))
+            .map_err(|e| TwoFactorError::InvalidSecret(e.to_string()))?;
+
+        <S as SecretStoreTx<Conn>>::delete_tx(&*self.store, conn, &path)
+            .await
+            .map_err(|e| TwoFactorError::CryptoError(e.to_string()))
+    }
 }
 
 #[async_trait]
@@ -192,6 +300,37 @@ impl<S: SecretStore> TwoFactorProvider for BackupCodeTwoFactorAuth<S> {
     }
 }
 
+#[async_trait]
+impl<Conn: Send, S: SecretStore + SecretStoreTx<Conn>> TwoFactorProviderTx<Conn>
+    for BackupCodeTwoFactorAuth<S>
+{
+    async fn issue_challenge_tx(
+        &self,
+        _conn: &mut Conn,
+        user_identifier: &str,
+    ) -> Result<TwoFactorChallenge, TwoFactorError> {
+        let challenge_id = format!("backup_{user_identifier}");
+        Ok(TwoFactorChallenge::new(
+            challenge_id,
+            TwoFactorMethod::BackupCode,
+        ))
+    }
+
+    async fn verify_response_tx(
+        &self,
+        conn: &mut Conn,
+        user_identifier: &str,
+        response: &TwoFactorResponse,
+    ) -> Result<bool, TwoFactorError> {
+        if response.method != TwoFactorMethod::BackupCode {
+            return Ok(false);
+        }
+
+        self.verify_and_consume_user_code_tx(conn, user_identifier, &response.response_data)
+            .await
+    }
+}
+
 fn constant_time_compare(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
@@ -201,4 +340,35 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
         result |= x ^ y;
     }
     result == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constant_time_compare_equal() {
+        assert!(constant_time_compare("abc123", "abc123"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_not_equal() {
+        assert!(!constant_time_compare("abc123", "abc124"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_different_lengths() {
+        assert!(!constant_time_compare("short", "longer_string"));
+    }
+
+    #[test]
+    fn test_constant_time_compare_empty() {
+        assert!(constant_time_compare("", ""));
+    }
+
+    #[test]
+    fn test_constant_time_compare_single_char_diff() {
+        assert!(!constant_time_compare("a", "b"));
+        assert!(constant_time_compare("a", "a"));
+    }
 }

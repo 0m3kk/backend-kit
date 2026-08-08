@@ -29,6 +29,7 @@ members = [
     "crates/two-factor-auth-email",
     "crates/two-factor-auth-sms",
     "crates/two-factor-auth-totp",
+    "crates/tx-manager",
     "crates/webauthn",
 ]
 

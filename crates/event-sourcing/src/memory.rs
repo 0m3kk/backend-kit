@@ -3,7 +3,7 @@ use futures_util::stream::{self, StreamExt};
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::store::{AppendError, EventStream};
+use crate::store::{AppendError, EventStore, EventStream};
 use crate::types::*;
 
 /// An in-memory, thread-safe implementation of an Event Store compliant with the DCB specification.
@@ -113,5 +113,50 @@ impl super::EventStore for InMemoryEventStore {
         }
 
         Ok(appended)
+    }
+}
+
+#[async_trait]
+impl<Conn: Send> super::EventStoreTx<Conn> for InMemoryEventStore {
+    async fn read_tx(
+        &self,
+        _conn: &mut Conn,
+        query: &Query,
+        options: ReadOptions,
+    ) -> Result<Vec<SequencedEvent>, super::ReadError> {
+        let events_guard = self
+            .events
+            .read()
+            .map_err(|e| super::ReadError::StoreError(e.to_string()))?;
+
+        let mut filtered: Vec<SequencedEvent> = events_guard
+            .iter()
+            .filter(|seq_event| {
+                if matches!(options.after, Some(after_pos) if seq_event.position <= after_pos) {
+                    return false;
+                }
+                query.matches(&seq_event.event)
+            })
+            .cloned()
+            .collect();
+
+        if options.direction == Direction::Backward {
+            filtered.reverse();
+        }
+
+        if let Some(limit) = options.limit {
+            filtered.truncate(limit);
+        }
+
+        Ok(filtered)
+    }
+
+    async fn append_tx(
+        &self,
+        _conn: &mut Conn,
+        events: &[Event],
+        condition: Option<&AppendCondition>,
+    ) -> Result<Vec<SequencedEvent>, AppendError> {
+        self.append(events.to_vec(), condition.cloned()).await
     }
 }

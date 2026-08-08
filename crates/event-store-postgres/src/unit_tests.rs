@@ -63,7 +63,7 @@ mod tests {
         let mut qb = QueryBuilder::<sqlx::Postgres>::new("SELECT * FROM events");
         let has_where = push_query_filter(&mut qb, &Query::all());
         assert!(!has_where);
-        assert_eq!(qb.sql(), "SELECT * FROM events");
+        assert_eq!(qb.sql().as_str(), "SELECT * FROM events");
     }
 
     #[test]
@@ -73,7 +73,7 @@ mod tests {
         let has_where = push_query_filter(&mut qb, &query);
 
         assert!(has_where);
-        assert!(qb.sql().contains("WHERE (event_type = ANY("));
+        assert!(qb.sql().as_str().contains("WHERE (event_type = ANY("));
     }
 
     #[test]
@@ -83,7 +83,7 @@ mod tests {
         let has_where = push_query_filter(&mut qb, &query);
 
         assert!(has_where);
-        assert!(qb.sql().contains("WHERE (tags @>"));
+        assert!(qb.sql().as_str().contains("WHERE (tags @>"));
     }
 
     #[test]
@@ -97,8 +97,8 @@ mod tests {
         let has_where = push_query_filter(&mut qb, &query);
 
         assert!(has_where);
-        assert!(qb.sql().contains("WHERE ((event_type = ANY("));
-        assert!(qb.sql().contains(") AND tags @>"));
+        assert!(qb.sql().as_str().contains("WHERE ((event_type = ANY("));
+        assert!(qb.sql().as_str().contains(") AND tags @>"));
     }
 
     #[test]
@@ -111,20 +111,23 @@ mod tests {
         let has_where = push_query_filter(&mut qb, &query);
 
         assert!(has_where);
-        assert!(qb.sql().contains("WHERE (event_type = ANY("));
-        assert!(qb.sql().contains(" OR tags @>"));
+        assert!(qb.sql().as_str().contains("WHERE (event_type = ANY("));
+        assert!(qb.sql().as_str().contains(" OR tags @>"));
     }
 
     #[test]
     fn test_query_builder_position_bounds() {
         let mut qb1 = QueryBuilder::<sqlx::Postgres>::new("SELECT * FROM events");
         push_position_bound(&mut qb1, false, ">=", SequencePosition::new(10));
-        assert_eq!(qb1.sql(), "SELECT * FROM events WHERE position >= $1");
+        assert_eq!(
+            qb1.sql().as_str(),
+            "SELECT * FROM events WHERE position >= $1"
+        );
 
         let mut qb2 = QueryBuilder::<sqlx::Postgres>::new("SELECT * FROM events WHERE 1=1");
         push_position_bound(&mut qb2, true, ">", SequencePosition::new(20));
         assert_eq!(
-            qb2.sql(),
+            qb2.sql().as_str(),
             "SELECT * FROM events WHERE 1=1 AND position > $1"
         );
     }

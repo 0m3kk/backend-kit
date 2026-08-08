@@ -89,7 +89,7 @@ impl<T: SecretStore + ?Sized> SecretStore for Arc<T> {
 /// `Conn` represents the connection or transaction handle type. The caller owns the
 /// transaction lifecycle — the store only executes operations through the provided handle.
 #[async_trait]
-pub trait SecretStoreTx<Conn: Send>: SecretStore {
+pub trait SecretStoreTx<Conn: Send>: Send + Sync {
     /// Retrieve the latest active version of a secret using the provided connection handle.
     async fn get_tx(
         &self,

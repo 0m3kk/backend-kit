@@ -323,7 +323,7 @@ impl SecretStoreTx<sqlx::PgConnection> for PostgresSecretStore {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .fetch_all(&mut *conn)
             .await
             .map_err(|e| SecretError::StoreError(e.to_string()))?;

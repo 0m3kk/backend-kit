@@ -280,7 +280,7 @@ impl KvStore for PostgresKvStore {
                 sql.push_str(&format!(" LIMIT {}", limit));
             }
 
-            let rows = match sqlx::query(&sql).fetch_all(&pool).await {
+            let rows = match sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).fetch_all(&pool).await {
                 Ok(r) => r,
                 Err(e) => {
                     yield Err(KvError::StoreError(e.to_string()));

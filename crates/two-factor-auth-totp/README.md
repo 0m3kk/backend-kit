@@ -12,6 +12,7 @@ Production-grade TOTP (Time-based One-Time Password) 2FA backend for `backend-ki
 - **Generic 2FA Integration**: Implements `TwoFactorProvider` for unified multi-factor authentication pipelines.
 - **RFC 6238 Compliance**: Full support for SHA-1, SHA-256, SHA-512, 6/7/8 digits, custom time steps, and configurable clock skew windows.
 - **QR Code Rendering**: Generate base64 Data URIs and raw PNG QR codes for enrollment with authenticator apps (Google Authenticator, Authy, 1Password).
+- **Transactional API (`TwoFactorProviderTx<Conn>`)**: Implements `TwoFactorProviderTx` with `issue_challenge_tx` and `verify_response_tx` accepting an external `&mut Conn` via `SecretStoreTx<Conn>`. Also exposes granular `_tx` methods (`enroll_user_tx`, `verify_user_token_tx`, `revoke_user_tx`) for direct use.
 
 ## Usage
 

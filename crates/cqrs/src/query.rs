@@ -3,8 +3,8 @@ use futures_util::StreamExt;
 use std::fmt::Debug;
 use tracing::{debug, error, info};
 
+use crate::checkpoint::{CheckpointError, CheckpointStore};
 use crate::view::{View, ViewError};
-use crate::view_checkpoint::{CheckpointError, CheckpointStore};
 
 /// Specified consistency requirement when executing a view query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +22,7 @@ where
     V: View<C>,
     C: Send + Sync + 'static,
     ES: EventStore,
-    CP: CheckpointStore<C>,
+    CP: CheckpointStore,
 {
     view: V,
     ctx: C,
@@ -35,7 +35,7 @@ where
     V: View<C>,
     C: Send + Sync + 'static,
     ES: EventStore,
-    CP: CheckpointStore<C>,
+    CP: CheckpointStore,
 {
     pub fn new(view: V, ctx: C, event_store: ES, checkpoint_store: CP) -> Self {
         Self {
@@ -61,7 +61,7 @@ where
         let view_name = self.view.view_name();
         let mut current_pos = self
             .checkpoint_store
-            .get_position(&self.ctx, view_name)
+            .get_position(view_name)
             .await
             .map_err(|e| {
                 error!(view_name = view_name, error = %e, "ViewQueryEngine failed to read checkpoint position");
@@ -90,7 +90,7 @@ where
 
         if let (Some(pos), true) = (current_pos, count > 0) {
             self.checkpoint_store
-                .save_position(&self.ctx, view_name, pos)
+                .save_position(view_name, pos)
                 .await
                 .map_err(|e: CheckpointError| {
                     error!(view_name = view_name, position = %pos, error = %e, "ViewQueryEngine failed to save checkpoint position");

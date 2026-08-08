@@ -53,7 +53,7 @@ pub trait EventStore: Send + Sync {
 /// Note: `read_tx` returns `Vec<SequencedEvent>` instead of a stream because streams
 /// cannot borrow from a connection handle (the stream is `'static`).
 #[async_trait]
-pub trait EventStoreTx<Conn: Send>: EventStore {
+pub trait EventStoreTx<Conn: Send>: Send + Sync {
     /// Reads sequenced events matching a Query using the provided connection handle.
     async fn read_tx(
         &self,

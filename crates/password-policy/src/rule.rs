@@ -83,3 +83,86 @@ pub fn find_repetitive_pattern(password: &str, max_repeat: usize) -> Option<(cha
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- find_sequential_pattern tests ---
+
+    #[test]
+    fn test_sequential_keyboard_row() {
+        assert!(find_sequential_pattern("myqwertypass", 3).is_some());
+        let result = find_sequential_pattern("myqwertypass", 5).unwrap();
+        assert!(result.contains("qwert"));
+    }
+
+    #[test]
+    fn test_sequential_numeric_ascending() {
+        let result = find_sequential_pattern("abc12345xyz", 3);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_sequential_numeric_descending() {
+        let result = find_sequential_pattern("abc98765xyz", 3);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_sequential_alpha_ascending() {
+        let result = find_sequential_pattern("xxabcdexx", 4);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_no_sequential_pattern() {
+        let result = find_sequential_pattern("xk9mQ2vL", 3);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_sequential_too_short_password() {
+        assert!(find_sequential_pattern("ab", 3).is_none());
+    }
+
+    #[test]
+    fn test_sequential_case_insensitive() {
+        assert!(find_sequential_pattern("QWERTY", 3).is_some());
+    }
+
+    // --- find_repetitive_pattern tests ---
+
+    #[test]
+    fn test_repetitive_exceeds_max() {
+        let result = find_repetitive_pattern("aaaa", 3);
+        assert!(result.is_some());
+        let (ch, count) = result.unwrap();
+        assert_eq!(ch, 'a');
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn test_repetitive_at_max_not_exceeding() {
+        // "aaa" with max_repeat=3 means 3 is allowed, only >3 triggers
+        assert!(find_repetitive_pattern("aaa", 3).is_none());
+    }
+
+    #[test]
+    fn test_repetitive_in_middle() {
+        let result = find_repetitive_pattern("ab!!!!cd", 3);
+        assert!(result.is_some());
+        let (ch, _) = result.unwrap();
+        assert_eq!(ch, '!');
+    }
+
+    #[test]
+    fn test_no_repetitive_pattern() {
+        assert!(find_repetitive_pattern("abcdef", 3).is_none());
+    }
+
+    #[test]
+    fn test_repetitive_empty_password() {
+        assert!(find_repetitive_pattern("", 3).is_none());
+    }
+}

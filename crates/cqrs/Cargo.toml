@@ -16,6 +16,7 @@ serde_json = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.53", features = ["sync", "time"] }
 tracing = "0.1"
+tx-manager = { path = "../tx-manager" }
 
 [dev-dependencies]
 event-sourcing = { path = "../event-sourcing", features = ["memory"] }

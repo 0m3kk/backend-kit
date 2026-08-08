@@ -248,3 +248,48 @@ impl KvStore for MemoryKvStore {
         Ok(count)
     }
 }
+
+#[async_trait]
+impl<Conn: Send> super::store::KvStoreTx<Conn> for MemoryKvStore {
+    async fn get_tx(&self, _conn: &mut Conn, key: &Key) -> Result<Option<Value>, KvError> {
+        self.get(key).await
+    }
+
+    async fn set_tx(
+        &self,
+        _conn: &mut Conn,
+        key: Key,
+        value: Value,
+        options: SetOptions,
+    ) -> Result<(), KvError> {
+        self.set(key, value, options).await
+    }
+
+    async fn delete_tx(&self, _conn: &mut Conn, key: &Key) -> Result<bool, KvError> {
+        self.delete(key).await
+    }
+
+    async fn exists_tx(&self, _conn: &mut Conn, key: &Key) -> Result<bool, KvError> {
+        self.exists(key).await
+    }
+
+    async fn batch_tx(&self, _conn: &mut Conn, ops: Vec<BatchOp>) -> Result<(), KvError> {
+        self.batch(ops).await
+    }
+
+    async fn ttl_tx(&self, _conn: &mut Conn, key: &Key) -> Result<Option<Duration>, KvError> {
+        self.ttl(key).await
+    }
+
+    async fn clear_tx(&self, _conn: &mut Conn) -> Result<(), KvError> {
+        self.clear().await
+    }
+
+    async fn clean_expired_tx(
+        &self,
+        _conn: &mut Conn,
+        limit: Option<usize>,
+    ) -> Result<u64, KvError> {
+        self.clean_expired(limit).await
+    }
+}

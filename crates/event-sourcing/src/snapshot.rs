@@ -65,6 +65,18 @@ impl<M: DecisionModel + Serialize + DeserializeOwned> LoadedModel<M> {
         kv.set(key, val, SetOptions::default()).await?;
         Ok(())
     }
+
+    /// Saves the current hydrated model state and sequence position to KV Store within an active transaction.
+    pub async fn save_snapshot_tx<Conn: Send>(
+        &self,
+        kv: &(impl kv_store::KvStoreTx<Conn> + ?Sized),
+        conn: &mut Conn,
+    ) -> Result<(), SnapshotError> {
+        let key = snapshot_key(&self.model.query());
+        let val = Value::from_json(self)?;
+        kv.set_tx(conn, key, val, SetOptions::default()).await?;
+        Ok(())
+    }
 }
 
 /// Extension trait for [`EventStore`] adding snapshot-backed decision model loading.
@@ -124,3 +136,64 @@ pub trait EventStoreSnapshotExt: EventStore {
 }
 
 impl<T: EventStore + ?Sized> EventStoreSnapshotExt for T {}
+
+/// Extension trait for [`crate::store::EventStoreTx`] adding transactional snapshot-backed decision model loading.
+#[async_trait]
+pub trait EventStoreSnapshotTxExt<Conn: Send>: crate::store::EventStoreTx<Conn> {
+    /// Hydrates a decision model using a KV snapshot within an active transaction, catching up with new events,
+    /// and automatically updating the snapshot in KV store via `set_tx` if newly applied events meet or exceed `options.threshold`.
+    async fn load_decision_model_with_snapshot_tx<M, KV>(
+        &self,
+        kv: &KV,
+        conn: &mut Conn,
+        model: M,
+        options: SnapshotOptions,
+    ) -> Result<LoadedModel<M>, SnapshotError>
+    where
+        M: DecisionModel + Serialize + DeserializeOwned,
+        KV: kv_store::KvStoreTx<Conn> + ?Sized,
+    {
+        let query = model.query();
+        let key = snapshot_key(&query);
+
+        // 1. Attempt to load snapshot from KV store within transaction
+        let (mut loaded, _had_snapshot) = match kv.get_tx(conn, &key).await {
+            Ok(Some(val)) => match val.to_json::<LoadedModel<M>>() {
+                Ok(snap) => (snap, true),
+                Err(_) => (LoadedModel::new(model), false),
+            },
+            _ => (LoadedModel::new(model), false),
+        };
+
+        // 2. Read events within transaction to catch up starting after snapshot position
+        let read_opts = match loaded.last_position {
+            Some(pos) => ReadOptions::default().after(pos),
+            None => ReadOptions::default(),
+        };
+
+        let events = self
+            .read_tx(conn, &query, read_opts)
+            .await
+            .map_err(SnapshotError::Read)?;
+        let new_events_count = events.len();
+
+        for seq_event in events {
+            loaded.apply_sequenced(&seq_event);
+        }
+
+        // 3. Auto-save snapshot within transaction if threshold reached
+        let should_snapshot = if options.threshold == 0 {
+            new_events_count > 0
+        } else {
+            new_events_count >= options.threshold
+        };
+
+        if should_snapshot {
+            loaded.save_snapshot_tx(kv, conn).await?;
+        }
+
+        Ok(loaded)
+    }
+}
+
+impl<T: crate::store::EventStoreTx<Conn> + ?Sized, Conn: Send> EventStoreSnapshotTxExt<Conn> for T {}

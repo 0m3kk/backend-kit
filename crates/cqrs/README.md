@@ -25,24 +25,78 @@ In CQRS architectures, system mutations (Commands) are decoupled from query read
 
 ## Core Component Index
 
-| CQRS Component            | Rust Type / Trait in `cqrs`                        | Description                                                                                   |
-| :------------------------ | :------------------------------------------------- | :-------------------------------------------------------------------------------------------- |
-| **Command Trait**         | [`Command<M, C>`](src/command.rs)                  | Generalized trait for CQRS commands targeting decision model(s) `M`                           |
-| **Decision Models Trait** | [`DecisionModels`](src/command.rs)                 | Re-exported trait from `event-sourcing` implemented for `Single<M>`, `Pair`, `Triple`, `Quad` |
-| **Standard Dispatcher**   | [`dispatch_command`](src/command.rs)               | Runner executing the 5-step Command lifecycle automatically                                   |
-| **Snapshot Dispatcher**   | [`dispatch_command_with_snapshot`](src/command.rs) | Runner with $O(1)$ KV snapshot loading and threshold auto-saving                              |
-| **Object-Safe View**      | [`View<C>`](src/view.rs)                           | Unified trait representing a read model and its event projection logic                        |
-| **Checkpoint Store**      | [`CheckpointStore<C>`](src/view_checkpoint.rs)     | Interface for retrieving and committing sequence positions using context `C`                  |
-| **KV Checkpoint Adapter** | [`KvCheckpointStore<K>`](src/view_checkpoint.rs)   | Adapter backing `CheckpointStore<C>` using any `KvStore` (`kv-store-postgres`, Redis)         |
-| **Read Consistency**      | [`ReadConsistency`](src/query.rs)                  | Enum specifying consistency requirement (`Eventual`, `Strong`)                                |
-| **View Query Engine**     | [`ViewQueryEngine`](src/query.rs)                  | Query executor providing on-demand catch-up to the latest Event Store head position           |
-| **Multi-View Worker**     | [`CatchupWorker`](src/catchup_worker.rs)           | Concurrent worker managing a list of `Box<dyn View<C>>` views catching them up in parallel    |
+| CQRS Component            | Rust Type / Trait in `cqrs`                                                                                                                                         | Description                                                                                                          |
+| :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
+| **Command Trait**         | [`Command<M>`](src/command.rs)                                                                                                                                      | Generalized trait for CQRS commands targeting decision model(s) `M`                                                  |
+| **Decision Models Trait** | [`DecisionModels`](src/command.rs)                                                                                                                                  | Re-exported trait from `event-sourcing` implemented for `Single<M>`, `Pair`, `Triple`, `Quad`                        |
+| **Standard Dispatcher**   | [`dispatch_command`](src/command.rs), [`dispatch_command_tx`](src/command.rs), [`dispatch_command_in_tx`](src/command.rs)                                           | Runners executing the 5-step Command lifecycle (non-tx, caller-tx `&mut Conn`, & self-managed `TransactionProvider`) |
+| **Snapshot Dispatcher**   | [`dispatch_command_with_snapshot`](src/command.rs), [`dispatch_command_with_snapshot_tx`](src/command.rs), [`dispatch_command_with_snapshot_in_tx`](src/command.rs) | Runners with $O(1)$ KV snapshot loading (non-tx, caller-tx, & self-managed `TransactionProvider`)                    |
+| **Command Dispatcher**    | [`CommandDispatcherTx`](src/command.rs)                                                                                                                             | Reusable dependency-injected transactional command dispatcher struct                                                 |
+| **Object-Safe View**      | [`View<C>`](src/view.rs)                                                                                                                                            | Unified trait representing a read model and its event projection logic                                               |
+| **Checkpoint Store**      | [`CheckpointStore`](src/checkpoint/mod.rs) & [`CheckpointStoreTx<Conn>`](src/checkpoint/mod.rs)                                                                     | Non-transactional and transactional interfaces for retrieving and committing sequence positions                      |
+| **KV Checkpoint Adapter** | [`KvCheckpointStore<K>`](src/checkpoint/kv.rs)                                                                                                                      | Adapter implementing `CheckpointStore` and `CheckpointStoreTx<Conn>` using any `KvStore` / `KvStoreTx`               |
+| **Read Consistency**      | [`ReadConsistency`](src/query.rs)                                                                                                                                   | Enum specifying consistency requirement (`Eventual`, `Strong`)                                                       |
+| **View Query Engine**     | [`ViewQueryEngine`](src/query.rs)                                                                                                                                   | Query executor providing on-demand catch-up to the latest Event Store head position                                  |
+| **Multi-View Worker**     | [`CatchupWorker`](src/catchup_worker.rs) & [`CatchupWorkerTx`](src/catchup_worker.rs)                                                                               | Concurrent workers managing views (standard non-tx, raw caller `&mut Conn`, & self-managed `CatchupWorkerTx`)        |
 
 ---
 
 ## Command Usage Examples
 
 ### 1. Single-Model Command (`Single<M>`)
+
+```rust
+use cqrs::{Command, dispatch_command, Single};
+
+let (updated_state, events) = dispatch_command(
+    CreateOrderCommand { order_id: "order_123", amount: 50 },
+    &event_store,
+).await?;
+```
+
+### 2. Self-Managed Transactional Command Dispatch (`dispatch_command_in_tx`)
+
+```rust
+use cqrs::{CommandDispatcherTx, dispatch_command_in_tx};
+
+// 1. Direct function call with PgPool:
+let events = dispatch_command_in_tx(
+    CreateOrderCommand { order_id: "order_123", amount: 50 },
+    &event_store,
+    &pg_pool, // Implements TransactionProvider from tx-manager
+).await?;
+
+// 2. Or using dependency-injected CommandDispatcherTx:
+let dispatcher = CommandDispatcherTx::new(event_store, pg_pool);
+let events = dispatcher.dispatch(CreateOrderCommand { order_id: "order_123", amount: 50 }).await?;
+```
+
+---
+
+## View Catch-up Examples
+
+### Self-Managed Transactional View Catch-up (`CatchupWorkerTx`)
+
+`CatchupWorkerTx` uses `TransactionProvider` (implemented out-of-the-box for `sqlx::PgPool` and `Arc<T>`) to automatically manage transaction boundaries (`begin_tx` $\rightarrow$ apply events $\rightarrow$ update checkpoint $\rightarrow$ `commit_tx`):
+
+```rust
+use cqrs::CatchupWorkerTx;
+
+let worker = CatchupWorkerTx::new(
+    storage_ctx,
+    event_store,
+    checkpoint_store,
+    pg_pool, // Implements TransactionProvider
+)
+.with_batch_size(100)
+.register_view(UserProfileView::default());
+
+// Catch up all registered views with self-managed transactions:
+let total_processed = worker.catchup_all().await?;
+
+// Or run continuously in the background:
+// worker.run_loop(Duration::from_millis(500)).await;
+```
 
 ```rust
 use cqrs::{Command, CommandError, Single};
@@ -101,7 +155,7 @@ impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
         Single(UserRegistrationModel { email: self.email.clone(), is_registered: false })
     }
 
-    fn decide(&self, model: &UserRegistrationModel, _ctx: &()) -> Result<Vec<Event>, CommandError> {
+    fn decide(&self, model: &UserRegistrationModel) -> Result<Vec<Event>, CommandError> {
         if model.is_registered {
             return Err(CommandError::Decision("Email already registered".to_string()));
         }
@@ -170,7 +224,6 @@ impl Command<Pair<BankAccountModel, BankAccountModel>> for TransferMoneyCommand 
     fn decide(
         &self,
         (from_acc, _to_acc): &(BankAccountModel, BankAccountModel),
-        _ctx: &(),
     ) -> Result<Vec<Event>, CommandError> {
         if from_acc.balance < self.amount {
             return Err(CommandError::Decision("Insufficient funds".to_string()));
@@ -210,7 +263,7 @@ where
     C: cqrs::Command<M, Error = cqrs::CommandError>,
 {
     let snapshot_options = SnapshotOptions::new(10); // auto-snapshot every 10 events
-    let appended = dispatch_command_with_snapshot(cmd, event_store, kv_store, snapshot_options, &()).await?;
+    let appended = dispatch_command_with_snapshot(cmd, event_store, kv_store, snapshot_options).await?;
     Ok(appended)
 }
 ```
@@ -244,13 +297,53 @@ pub async fn start_worker<C, ES, CP>(ctx: C, event_store: ES, checkpoint_store: 
 where
     C: Send + Sync + 'static,
     ES: event_sourcing::EventStore + 'static,
-    CP: cqrs::CheckpointStore<C> + 'static,
+    CP: cqrs::CheckpointStore + 'static,
 {
     let worker = CatchupWorker::new(ctx, event_store, checkpoint_store)
         .register_view(UserProfileView);
 
     // Run parallel catch-up background loop:
     tokio::spawn(worker.run_loop(std::time::Duration::from_secs(1)));
+}
+```
+
+---
+
+## Transactional View Catch-up (`catchup_view_tx`)
+
+For 100% ACID atomic projections, read model updates and checkpoint progression execute in the exact same database transaction:
+
+```rust
+use cqrs::{catchup_view_tx, View, CheckpointStoreTx};
+use event_sourcing::EventStoreTx;
+use sqlx::PgPool;
+
+pub async fn project_in_transaction<V, C, ES, CP>(
+    pool: &PgPool,
+    view: &V,
+    event_store: &ES,
+    checkpoint_store: &CP,
+    storage_ctx: &C,
+) -> Result<usize, Box<dyn std::error::Error>>
+where
+    V: View<C>,
+    ES: EventStoreTx<sqlx::PgConnection>,
+    CP: CheckpointStoreTx<sqlx::PgConnection>,
+    C: Send + Sync + 'static,
+{
+    let mut tx = pool.begin().await?;
+
+    let processed = catchup_view_tx(
+        storage_ctx,
+        &mut tx,
+        view,
+        event_store,
+        checkpoint_store,
+        Some(100), // optional batch size limit
+    ).await?;
+
+    tx.commit().await?;
+    Ok(processed)
 }
 ```
 

@@ -8,7 +8,7 @@ async-stream = "0.3"
 async-trait = "0.1"
 futures-util = "0.3"
 kv-store = { path = "../kv-store" }
-sqlx = { version = "=0.8.6", features = ["postgres", "runtime-tokio", "macros"] }
+sqlx = { version = "0.9", features = ["postgres", "runtime-tokio", "tls-native-tls", "macros"] }
 tokio = { version = "1.53", features = ["time"] }
 
 [dev-dependencies]
