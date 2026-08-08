@@ -7,7 +7,7 @@ edition = "2024"
 async-trait = "0.1"
 secret-store = { path = "../secret-store" }
 serde_json = "1.0"
-sqlx = { version = "=0.8.6", features = ["postgres", "runtime-tokio", "macros", "json", "time"] }
+sqlx = { version = "0.9", features = ["postgres", "runtime-tokio", "tls-native-tls", "macros", "json", "time"] }
 tokio = { version = "1.53", features = ["time"] }
 
 [dev-dependencies]

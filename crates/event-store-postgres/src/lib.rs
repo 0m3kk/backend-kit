@@ -279,7 +279,7 @@ impl EventStore for PostgresEventStore {
 }
 
 /// Appends the SQL filter for a [`Query`] to `qb` using owned String binds.
-fn push_query_filter<'a>(qb: &mut QueryBuilder<'a, sqlx::Postgres>, query: &Query) -> bool {
+fn push_query_filter(qb: &mut QueryBuilder<sqlx::Postgres>, query: &Query) -> bool {
     let Query::Items { items } = query else {
         return false;
     };
@@ -298,8 +298,8 @@ fn push_query_filter<'a>(qb: &mut QueryBuilder<'a, sqlx::Postgres>, query: &Quer
 }
 
 /// Appends a `position <op> <pos>` predicate to `qb`.
-fn push_position_bound<'a>(
-    qb: &mut QueryBuilder<'a, sqlx::Postgres>,
+fn push_position_bound(
+    qb: &mut QueryBuilder<sqlx::Postgres>,
     has_where: bool,
     op: &'static str,
     pos: SequencePosition,
@@ -312,7 +312,7 @@ fn push_position_bound<'a>(
 }
 
 /// Appends the SQL predicate for a single [`QueryItem`] to `qb` binding owned values.
-fn push_item<'a>(qb: &mut QueryBuilder<'a, sqlx::Postgres>, item: &QueryItem) {
+fn push_item(qb: &mut QueryBuilder<sqlx::Postgres>, item: &QueryItem) {
     let has_types = !item.types.is_empty();
     let has_tags = !item.tags.is_empty();
 
