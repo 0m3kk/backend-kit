@@ -9,19 +9,19 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use std::future::Future;
 use tracing::{debug, error};
 
+use crate::context::TxContext;
 use crate::runner::{IsolationLevel, RetryPolicy, TransactionError, apply_backoff, is_retryable_sql_error};
-use crate::uow::UnitOfWork;
 
-/// A unified PostgreSQL Unit of Work bundling multiple stores over a single database transaction.
-pub struct PostgresUnitOfWork<'c> {
+/// A unified PostgreSQL Transactional Context bundling multiple stores over a single database transaction.
+pub struct PostgresTxContext<'c> {
     tx: Option<Transaction<'c, Postgres>>,
     events: PostgresEventStore,
     kv: PostgresKvStore,
     secrets: PostgresSecretStore,
 }
 
-impl<'c> PostgresUnitOfWork<'c> {
-    /// Creates a new `PostgresUnitOfWork` wrapping an active SQLx transaction.
+impl<'c> PostgresTxContext<'c> {
+    /// Creates a new `PostgresTxContext` wrapping an active SQLx transaction.
     pub fn new(
         tx: Transaction<'c, Postgres>,
         events: PostgresEventStore,
@@ -60,7 +60,7 @@ impl<'c> PostgresUnitOfWork<'c> {
     }
 
     // -----------------------------------------------------------------------
-    // Event Store convenience operations within this Unit of Work
+    // Event Store convenience operations within this Transaction Context
     // -----------------------------------------------------------------------
 
     /// Appends events to the Event Store within this active transaction.
@@ -92,7 +92,7 @@ impl<'c> PostgresUnitOfWork<'c> {
     }
 
     // -----------------------------------------------------------------------
-    // Key-Value Store convenience operations within this Unit of Work
+    // Key-Value Store convenience operations within this Transaction Context
     // -----------------------------------------------------------------------
 
     /// Retrieves a value by key within this active transaction.
@@ -141,7 +141,7 @@ impl<'c> PostgresUnitOfWork<'c> {
     }
 
     // -----------------------------------------------------------------------
-    // Secret Store convenience operations within this Unit of Work
+    // Secret Store convenience operations within this Transaction Context
     // -----------------------------------------------------------------------
 
     /// Retrieves a secret by path within this active transaction.
@@ -191,7 +191,7 @@ impl<'c> PostgresUnitOfWork<'c> {
 }
 
 #[async_trait]
-impl<'c> UnitOfWork for PostgresUnitOfWork<'c> {
+impl<'c> TxContext for PostgresTxContext<'c> {
     type Error = sqlx::Error;
 
     async fn commit(mut self) -> Result<(), Self::Error> {
@@ -209,7 +209,7 @@ impl<'c> UnitOfWork for PostgresUnitOfWork<'c> {
     }
 }
 
-/// Transaction runner for PostgreSQL, executing units of work with automatic retries and isolation level configuration.
+/// Transaction runner for PostgreSQL, executing transactional closures with automatic retries and isolation level configuration.
 #[derive(Clone)]
 pub struct PostgresTransactionRunner {
     pool: PgPool,
@@ -259,12 +259,12 @@ impl PostgresTransactionRunner {
         self
     }
 
-    /// Executes a transactional closure inside a [`PostgresUnitOfWork`].
+    /// Executes a transactional closure inside a [`PostgresTxContext`].
     /// Automatically commits if the closure returns `Ok`, rolls back on `Err`,
     /// and retries on transient PostgreSQL serialization errors (`40001` or `40P01`).
     pub async fn run<F, Fut, R, E>(&self, mut work: F) -> Result<R, TransactionError<E>>
     where
-        F: FnMut(&mut PostgresUnitOfWork<'_>) -> Fut,
+        F: FnMut(&mut PostgresTxContext<'_>) -> Fut,
         Fut: Future<Output = Result<R, E>>,
     {
         let mut attempt: u32 = 0;
@@ -275,7 +275,7 @@ impl PostgresTransactionRunner {
             debug!(
                 attempt = attempt,
                 isolation = ?self.isolation_level,
-                "Beginning unit of work transaction"
+                "Beginning transactional context"
             );
 
             let tx = match self.pool.begin_with(self.isolation_level.sql_begin()).await {
@@ -290,32 +290,32 @@ impl PostgresTransactionRunner {
                 }
             };
 
-            let mut uow = PostgresUnitOfWork::new(
+            let mut ctx = PostgresTxContext::new(
                 tx,
                 self.events.clone(),
                 self.kv.clone(),
                 self.secrets.clone(),
             );
 
-            let result = work(&mut uow).await;
+            let result = work(&mut ctx).await;
 
             match result {
                 Ok(val) => {
-                    if let Err(commit_err) = uow.commit().await {
+                    if let Err(commit_err) = ctx.commit().await {
                         let err_msg = commit_err.to_string();
                         if is_retryable_sql_error(&err_msg) && attempt < self.retry_policy.max_attempts {
                             apply_backoff(&self.retry_policy, attempt, &err_msg).await;
                             continue;
                         }
-                        error!(error = %err_msg, "Failed to commit unit of work transaction");
+                        error!(error = %err_msg, "Failed to commit transaction");
                         return Err(TransactionError::Database(err_msg));
                     }
 
-                    debug!(attempt = attempt, "Unit of work transaction committed successfully");
+                    debug!(attempt = attempt, "Transaction committed successfully");
                     return Ok(val);
                 }
                 Err(domain_err) => {
-                    let _ = uow.rollback().await;
+                    let _ = ctx.rollback().await;
                     return Err(TransactionError::Domain(domain_err));
                 }
             }

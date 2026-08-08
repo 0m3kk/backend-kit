@@ -1,8 +1,8 @@
 [package]
-name = "unit-of-work"
+name = "tx-manager"
 version = "0.1.0"
 edition = "2024"
-description = "Unit of Work and Transaction Runner abstractions for backend-kit"
+description = "Transaction Manager and Runner abstractions for backend-kit"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

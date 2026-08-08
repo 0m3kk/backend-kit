@@ -360,9 +360,188 @@ async fn test_worker_error_resilience_and_checkpoint_preservation() {
     assert!(result.is_err());
 
     let checkpoint = KvCheckpointStore::new(kv_store)
-        .get_position(&db, "resilient_view")
+        .get_position("resilient_view")
         .await
         .unwrap();
     assert_eq!(checkpoint, Some(event_sourcing::SequencePosition::new(2)));
     assert_eq!(db.users.read().unwrap().len(), 2);
 }
+
+#[derive(Clone, Default)]
+struct MockTxProvider {
+    pub active_tx_count: Arc<std::sync::atomic::AtomicUsize>,
+    pub committed_count: Arc<std::sync::atomic::AtomicUsize>,
+    pub rolled_back_count: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl cqrs::TransactionProvider for MockTxProvider {
+    type Conn = ();
+    type Error = String;
+
+    async fn begin_tx(&self) -> Result<(), Self::Error> {
+        self.active_tx_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn commit_tx(&self, _conn: ()) -> Result<(), Self::Error> {
+        self.committed_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn rollback_tx(&self, _conn: ()) -> Result<(), Self::Error> {
+        self.rolled_back_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_transactional_catchup_worker_self_managed_tx_success() {
+    let event_store = Arc::new(InMemoryEventStore::new());
+    let db = WorkerTestDb::default();
+    let kv_store = MemoryKvStore::new();
+    let checkpoint_store = KvCheckpointStore::new(kv_store);
+    let tx_provider = MockTxProvider::default();
+
+    for i in 1..=3 {
+        let evt = UserRegistered {
+            user_id: format!("u_self_{i}"),
+            username: format!("User Self {i}"),
+        }
+        .to_event(EventId::new(format!("self_e_{i}")))
+        .unwrap();
+        event_store.append(vec![evt], None).await.unwrap();
+    }
+
+    let worker = cqrs::CatchupWorkerTx::new(
+        db.clone(),
+        event_store,
+        checkpoint_store.clone(),
+        tx_provider.clone(),
+    )
+    .with_batch_size(10)
+    .register_view(UserProfileView {
+        user_id: String::new(),
+        username: String::new(),
+    });
+
+    let processed = worker.catchup_all().await.unwrap();
+    assert_eq!(processed, 3);
+    assert_eq!(db.users.read().unwrap().len(), 3);
+    assert_eq!(
+        tx_provider
+            .committed_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        tx_provider
+            .rolled_back_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+
+    let checkpoint = checkpoint_store
+        .get_position("user_profiles")
+        .await
+        .unwrap();
+    assert_eq!(checkpoint, Some(event_sourcing::SequencePosition::new(3)));
+}
+
+#[tokio::test]
+async fn test_transactional_catchup_worker_self_managed_tx_rollback_on_error() {
+    let event_store = Arc::new(InMemoryEventStore::new());
+    let db = WorkerTestDb::default();
+    let kv_store = MemoryKvStore::new();
+    let checkpoint_store = KvCheckpointStore::new(kv_store);
+    let tx_provider = MockTxProvider::default();
+
+    let event1 = UserRegistered {
+        user_id: "u_valid1".to_string(),
+        username: "V1".to_string(),
+    }
+    .to_event(EventId::new("err_e1"))
+    .unwrap();
+    let event2 = UserRegistered {
+        user_id: "corrupt_user".to_string(),
+        username: "ERR".to_string(),
+    }
+    .to_event(EventId::new("err_e2"))
+    .unwrap();
+
+    event_store
+        .append(vec![event1, event2], None)
+        .await
+        .unwrap();
+
+    let worker = cqrs::CatchupWorkerTx::new(
+        db.clone(),
+        event_store,
+        checkpoint_store.clone(),
+        tx_provider.clone(),
+    )
+    .register_view(ResilientTestView);
+
+    let result = worker.catchup_all().await;
+    assert!(result.is_err());
+    assert_eq!(
+        tx_provider
+            .rolled_back_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        tx_provider
+            .committed_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+}
+
+#[tokio::test]
+async fn test_catchup_view_in_tx_standalone() {
+    let event_store = Arc::new(InMemoryEventStore::new());
+    let db = WorkerTestDb::default();
+    let kv_store = MemoryKvStore::new();
+    let checkpoint_store = KvCheckpointStore::new(kv_store);
+    let tx_provider = MockTxProvider::default();
+
+    let evt = UserRegistered {
+        user_id: "u_standalone".to_string(),
+        username: "Standalone".to_string(),
+    }
+    .to_event(EventId::new("sa_e1"))
+    .unwrap();
+    event_store.append(vec![evt], None).await.unwrap();
+
+    let view = UserProfileView {
+        user_id: String::new(),
+        username: String::new(),
+    };
+
+    let count = cqrs::catchup_view_in_tx(
+        &db,
+        &view,
+        &event_store,
+        &checkpoint_store,
+        &tx_provider,
+        Some(100),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(count, 1);
+    assert_eq!(db.users.read().unwrap().len(), 1);
+    assert_eq!(
+        tx_provider
+            .committed_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+
+

@@ -1,6 +1,6 @@
-# unit-of-work
+# tx-manager
 
-Production-grade **Unit of Work** and **Transaction Runner** abstractions for **backend-kit**, providing unified multi-store transactional coordination, automatic PostgreSQL `SERIALIZABLE` retries with exponential backoff, and strict ACID guarantees across events, key-value caches, and secrets.
+Production-grade **Transaction Manager** and **Runner** abstractions for **backend-kit**, providing unified multi-store transactional coordination, automatic PostgreSQL `SERIALIZABLE` retries with exponential backoff, and strict ACID guarantees across events, key-value caches, and secrets.
 
 ---
 
@@ -11,6 +11,7 @@ Production-grade **Unit of Work** and **Transaction Runner** abstractions for **
 - **Automatic Conflict Retries**: Built-in exponential backoff for transient serialization errors (`40001` serialization failure and `40P01` deadlock).
 - **Configurable Isolation**: Supports `ReadCommitted`, `RepeatableRead`, and `Serializable` isolation levels.
 - **Closure-Based Lifecycle**: `run(...)` automatically manages transaction begin, execution, commit, rollback on error, and backoff retries.
+- **TransactionProvider Trait**: Standard interface implemented for `sqlx::PgPool` and `Arc<T>` used by background workers (e.g. CQRS `CatchupWorkerTx`).
 
 ---
 
@@ -19,15 +20,15 @@ Production-grade **Unit of Work** and **Transaction Runner** abstractions for **
 ```mermaid
 flowchart TD
     Runner[PostgresTransactionRunner] -->|BEGIN TX| DB[(PostgreSQL)]
-    Runner -->|Creates| UoW[PostgresUnitOfWork]
+    Runner -->|Creates| Ctx[PostgresTxContext]
     
     subgraph Single Postgres Transaction
-        UoW -->|append_tx| Events[PostgresEventStore]
-        UoW -->|set_tx| KV[PostgresKvStore]
-        UoW -->|set_tx| Secrets[PostgresSecretStore]
+        Ctx -->|append_tx| Events[PostgresEventStore]
+        Ctx -->|set_tx| KV[PostgresKvStore]
+        Ctx -->|set_tx| Secrets[PostgresSecretStore]
     end
     
-    UoW -->|COMMIT / ROLLBACK| DB
+    Ctx -->|COMMIT / ROLLBACK| DB
 ```
 
 ---
@@ -36,7 +37,7 @@ flowchart TD
 
 ```rust
 use sqlx::PgPool;
-use unit_of_work::{PostgresTransactionRunner, IsolationLevel, RetryPolicy};
+use tx_manager::{PostgresTransactionRunner, IsolationLevel, RetryPolicy};
 use event_sourcing::Event;
 use kv_store::{Key, Value, SetOptions};
 
@@ -47,13 +48,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_isolation_level(IsolationLevel::Serializable);
 
     // All operations inside the closure execute in ONE atomic PostgreSQL transaction
-    let result = runner.run(|uow| Box::pin(async move {
+    let result = runner.run(|ctx| Box::pin(async move {
         // 1. Append domain events
         let event = Event::new("order-123", "OrderCreated", serde_json::json!({"total": 100}), vec![]);
-        uow.append_events(&[event], None).await?;
+        ctx.append_events(&[event], None).await?;
 
         // 2. Update KV cache
-        uow.set_kv(Key::from("order:order-123"), Value::from("active"), SetOptions::default()).await?;
+        ctx.set_kv(Key::from("order:order-123"), Value::from("active"), SetOptions::default()).await?;
 
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>("Order processed successfully")
     })).await?;
