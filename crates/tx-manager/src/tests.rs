@@ -1,11 +1,20 @@
-use std::time::Duration;
 use crate::runner::{IsolationLevel, RetryPolicy, is_retryable_sql_error};
+use std::time::Duration;
 
 #[test]
 fn test_isolation_level_sql_begin() {
-    assert_eq!(IsolationLevel::ReadCommitted.sql_begin(), "BEGIN ISOLATION LEVEL READ COMMITTED");
-    assert_eq!(IsolationLevel::RepeatableRead.sql_begin(), "BEGIN ISOLATION LEVEL REPEATABLE READ");
-    assert_eq!(IsolationLevel::Serializable.sql_begin(), "BEGIN ISOLATION LEVEL SERIALIZABLE");
+    assert_eq!(
+        IsolationLevel::ReadCommitted.sql_begin(),
+        "BEGIN ISOLATION LEVEL READ COMMITTED"
+    );
+    assert_eq!(
+        IsolationLevel::RepeatableRead.sql_begin(),
+        "BEGIN ISOLATION LEVEL REPEATABLE READ"
+    );
+    assert_eq!(
+        IsolationLevel::Serializable.sql_begin(),
+        "BEGIN ISOLATION LEVEL SERIALIZABLE"
+    );
 }
 
 #[test]
@@ -25,7 +34,9 @@ fn test_retry_policy_exponential_backoff() {
 
 #[test]
 fn test_is_retryable_sql_error() {
-    assert!(is_retryable_sql_error("ERROR: 40001: could not serialize access due to read/write dependencies"));
+    assert!(is_retryable_sql_error(
+        "ERROR: 40001: could not serialize access due to read/write dependencies"
+    ));
     assert!(is_retryable_sql_error("ERROR: 40P01: deadlock detected"));
     assert!(is_retryable_sql_error("serialization failure occurred"));
     assert!(!is_retryable_sql_error("ERROR: 23505: unique violation"));

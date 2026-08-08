@@ -168,10 +168,7 @@ async fn test_checkpoint_store_multiple_isolated_views() {
         checkpoint_store.get_position("view_c").await.unwrap(),
         Some(SequencePosition::new(30))
     );
-    assert_eq!(
-        checkpoint_store.get_position("view_d").await.unwrap(),
-        None
-    );
+    assert_eq!(checkpoint_store.get_position("view_d").await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -199,5 +196,3 @@ async fn test_checkpoint_store_invalid_parse_handling() {
         _ => panic!("Expected CheckpointError::Parse"),
     }
 }
-
-

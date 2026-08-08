@@ -7,17 +7,17 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 async-trait = "0.1"
+
+event-sourcing = { path = "../event-sourcing" }
+event-store-postgres = { path = "../event-store-postgres" }
+kv-store = { path = "../kv-store" }
+kv-store-postgres = { path = "../kv-store-postgres" }
+secret-store = { path = "../secret-store" }
+secret-store-postgres = { path = "../secret-store-postgres" }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-native-tls", "macros"] }
 thiserror = "2.0"
 tokio = { version = "1.43", features = ["time", "sync"] }
 tracing = "0.1"
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-native-tls", "macros"] }
-
-event-sourcing = { path = "../event-sourcing" }
-kv-store = { path = "../kv-store" }
-secret-store = { path = "../secret-store" }
-event-store-postgres = { path = "../event-store-postgres" }
-kv-store-postgres = { path = "../kv-store-postgres" }
-secret-store-postgres = { path = "../secret-store-postgres" }
 
 [lints.clippy]
 unwrap_used = "deny"

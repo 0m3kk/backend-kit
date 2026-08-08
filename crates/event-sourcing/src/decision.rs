@@ -4,7 +4,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 
-use crate::snapshot::{EventStoreSnapshotExt, EventStoreSnapshotTxExt, SnapshotError, SnapshotOptions};
+use crate::snapshot::{
+    EventStoreSnapshotExt, EventStoreSnapshotTxExt, SnapshotError, SnapshotOptions,
+};
 use crate::store::{EventStore, EventStoreTx, ReadError};
 use crate::types::{Event, Query, ReadOptions, SequencePosition, SequencedEvent};
 
@@ -102,7 +104,11 @@ pub trait DecisionModels: Send + Sync + 'static {
     ) -> Result<LoadedModels<Self::Hydrated>, ReadError>;
 
     /// Hydrates decision models using KV snapshots within an active transaction and catching up remaining events via [`EventStoreSnapshotTxExt`].
-    async fn load_all_with_snapshot_tx<ES: EventStoreTx<Conn>, KV: kv_store::KvStoreTx<Conn>, Conn: Send>(
+    async fn load_all_with_snapshot_tx<
+        ES: EventStoreTx<Conn>,
+        KV: kv_store::KvStoreTx<Conn>,
+        Conn: Send,
+    >(
         self,
         event_store: &ES,
         kv: &KV,
@@ -169,7 +175,11 @@ where
         })
     }
 
-    async fn load_all_with_snapshot_tx<ES: EventStoreTx<Conn>, KV: kv_store::KvStoreTx<Conn>, Conn: Send>(
+    async fn load_all_with_snapshot_tx<
+        ES: EventStoreTx<Conn>,
+        KV: kv_store::KvStoreTx<Conn>,
+        Conn: Send,
+    >(
         self,
         event_store: &ES,
         kv: &KV,
@@ -356,4 +366,3 @@ pub trait EventStoreTxExt<Conn: Send>: EventStoreTx<Conn> {
 }
 
 impl<T: EventStoreTx<Conn> + ?Sized, Conn: Send> EventStoreTxExt<Conn> for T {}
-

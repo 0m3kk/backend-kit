@@ -176,10 +176,7 @@ impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
         Single(UserRegistrationModel::new(&self.email))
     }
 
-    fn decide(
-        &self,
-        model: &UserRegistrationModel,
-    ) -> Result<Vec<Event>, RegisterUserError> {
+    fn decide(&self, model: &UserRegistrationModel) -> Result<Vec<Event>, RegisterUserError> {
         if model.is_registered {
             return Err(RegisterUserError::EmailAlreadyRegistered(
                 self.email.clone(),
@@ -575,4 +572,3 @@ async fn test_dispatch_command_with_snapshot_tx_success() {
 
     assert_eq!(appended.len(), 1);
 }
-

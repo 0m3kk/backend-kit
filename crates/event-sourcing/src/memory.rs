@@ -160,4 +160,3 @@ impl<Conn: Send> super::EventStoreTx<Conn> for InMemoryEventStore {
         self.append(events.to_vec(), condition.cloned()).await
     }
 }
-

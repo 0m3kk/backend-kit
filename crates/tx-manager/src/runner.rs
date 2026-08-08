@@ -71,10 +71,7 @@ pub enum TransactionError<E> {
 
     /// All retry attempts exhausted due to repeated transient serialization conflicts.
     #[error("Transaction retries exhausted after {attempts} attempts: {last_error}")]
-    RetriesExhausted {
-        attempts: u32,
-        last_error: String,
-    },
+    RetriesExhausted { attempts: u32, last_error: String },
 }
 
 /// Abstract runner for executing units of work inside a managed transaction lifecycle.

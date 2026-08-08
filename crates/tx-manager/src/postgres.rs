@@ -1,16 +1,24 @@
 use async_trait::async_trait;
-use event_sourcing::{AppendCondition, AppendError, Event, EventStoreTx, Query, ReadError, ReadOptions, SequencedEvent};
+use event_sourcing::{
+    AppendCondition, AppendError, Event, EventStoreTx, Query, ReadError, ReadOptions,
+    SequencedEvent,
+};
 use event_store_postgres::PostgresEventStore;
 use kv_store::{BatchOp, Key, KvError, KvStoreTx, SetOptions, Value};
 use kv_store_postgres::PostgresKvStore;
-use secret_store::{CipherAlgorithm, KeyRing, ListSecretOptions, MasterKey, SecretEntry, SecretError, SecretHeader, SecretPath, SecretStoreTx, SecretValue, SetSecretOptions};
+use secret_store::{
+    CipherAlgorithm, KeyRing, ListSecretOptions, MasterKey, SecretEntry, SecretError, SecretHeader,
+    SecretPath, SecretStoreTx, SecretValue, SetSecretOptions,
+};
 use secret_store_postgres::PostgresSecretStore;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use std::future::Future;
 use tracing::{debug, error};
 
 use crate::context::TxContext;
-use crate::runner::{IsolationLevel, RetryPolicy, TransactionError, apply_backoff, is_retryable_sql_error};
+use crate::runner::{
+    IsolationLevel, RetryPolicy, TransactionError, apply_backoff, is_retryable_sql_error,
+};
 
 /// A unified PostgreSQL Transactional Context bundling multiple stores over a single database transaction.
 pub struct PostgresTxContext<'c> {
@@ -53,10 +61,9 @@ impl<'c> PostgresTxContext<'c> {
 
     /// Access mutable reference to the underlying transaction connection handle.
     pub fn conn(&mut self) -> Result<&mut PgConnection, sqlx::Error> {
-        self.tx
-            .as_mut()
-            .map(|t| &mut **t)
-            .ok_or_else(|| sqlx::Error::Configuration("Transaction already committed or rolled back".into()))
+        self.tx.as_deref_mut().ok_or_else(|| {
+            sqlx::Error::Configuration("Transaction already committed or rolled back".into())
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -71,8 +78,7 @@ impl<'c> PostgresTxContext<'c> {
     ) -> Result<Vec<SequencedEvent>, AppendError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| AppendError::StoreError("Transaction inactive".into()))?;
         self.events.append_tx(conn, events, condition).await
     }
@@ -85,8 +91,7 @@ impl<'c> PostgresTxContext<'c> {
     ) -> Result<Vec<SequencedEvent>, ReadError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| ReadError::StoreError("Transaction inactive".into()))?;
         self.events.read_tx(conn, query, options).await
     }
@@ -99,8 +104,7 @@ impl<'c> PostgresTxContext<'c> {
     pub async fn get_kv(&mut self, key: &Key) -> Result<Option<Value>, KvError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| KvError::StoreError("Transaction inactive".into()))?;
         self.kv.get_tx(conn, key).await
     }
@@ -114,8 +118,7 @@ impl<'c> PostgresTxContext<'c> {
     ) -> Result<(), KvError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| KvError::StoreError("Transaction inactive".into()))?;
         self.kv.set_tx(conn, key, value, options).await
     }
@@ -124,8 +127,7 @@ impl<'c> PostgresTxContext<'c> {
     pub async fn delete_kv(&mut self, key: &Key) -> Result<bool, KvError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| KvError::StoreError("Transaction inactive".into()))?;
         self.kv.delete_tx(conn, key).await
     }
@@ -134,8 +136,7 @@ impl<'c> PostgresTxContext<'c> {
     pub async fn batch_kv(&mut self, ops: Vec<BatchOp>) -> Result<(), KvError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| KvError::StoreError("Transaction inactive".into()))?;
         self.kv.batch_tx(conn, ops).await
     }
@@ -145,11 +146,13 @@ impl<'c> PostgresTxContext<'c> {
     // -----------------------------------------------------------------------
 
     /// Retrieves a secret by path within this active transaction.
-    pub async fn get_secret(&mut self, path: &SecretPath) -> Result<Option<SecretEntry>, SecretError> {
+    pub async fn get_secret(
+        &mut self,
+        path: &SecretPath,
+    ) -> Result<Option<SecretEntry>, SecretError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| SecretError::StoreError("Transaction inactive".into()))?;
         self.secrets.get_tx(conn, path).await
     }
@@ -163,8 +166,7 @@ impl<'c> PostgresTxContext<'c> {
     ) -> Result<SecretEntry, SecretError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| SecretError::StoreError("Transaction inactive".into()))?;
         self.secrets.set_tx(conn, path, value, options).await
     }
@@ -173,18 +175,19 @@ impl<'c> PostgresTxContext<'c> {
     pub async fn delete_secret(&mut self, path: &SecretPath) -> Result<bool, SecretError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| SecretError::StoreError("Transaction inactive".into()))?;
         self.secrets.delete_tx(conn, path).await
     }
 
     /// Lists secret headers within this active transaction.
-    pub async fn list_secrets(&mut self, options: ListSecretOptions) -> Result<Vec<SecretHeader>, SecretError> {
+    pub async fn list_secrets(
+        &mut self,
+        options: ListSecretOptions,
+    ) -> Result<Vec<SecretHeader>, SecretError> {
         let conn = self
             .tx
-            .as_mut()
-            .map(|t| &mut **t)
+            .as_deref_mut()
             .ok_or_else(|| SecretError::StoreError("Transaction inactive".into()))?;
         self.secrets.list_tx(conn, options).await
     }
@@ -282,7 +285,8 @@ impl PostgresTransactionRunner {
                 Ok(tx) => tx,
                 Err(e) => {
                     let err_msg = e.to_string();
-                    if is_retryable_sql_error(&err_msg) && attempt < self.retry_policy.max_attempts {
+                    if is_retryable_sql_error(&err_msg) && attempt < self.retry_policy.max_attempts
+                    {
                         apply_backoff(&self.retry_policy, attempt, &err_msg).await;
                         continue;
                     }
@@ -303,7 +307,9 @@ impl PostgresTransactionRunner {
                 Ok(val) => {
                     if let Err(commit_err) = ctx.commit().await {
                         let err_msg = commit_err.to_string();
-                        if is_retryable_sql_error(&err_msg) && attempt < self.retry_policy.max_attempts {
+                        if is_retryable_sql_error(&err_msg)
+                            && attempt < self.retry_policy.max_attempts
+                        {
                             apply_backoff(&self.retry_policy, attempt, &err_msg).await;
                             continue;
                         }

@@ -21,13 +21,13 @@ Production-grade **Transaction Manager** and **Runner** abstractions for **backe
 flowchart TD
     Runner[PostgresTransactionRunner] -->|BEGIN TX| DB[(PostgreSQL)]
     Runner -->|Creates| Ctx[PostgresTxContext]
-    
+
     subgraph Single Postgres Transaction
         Ctx -->|append_tx| Events[PostgresEventStore]
         Ctx -->|set_tx| KV[PostgresKvStore]
         Ctx -->|set_tx| Secrets[PostgresSecretStore]
     end
-    
+
     Ctx -->|COMMIT / ROLLBACK| DB
 ```
 

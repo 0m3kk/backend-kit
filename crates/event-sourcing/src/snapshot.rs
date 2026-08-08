@@ -197,4 +197,3 @@ pub trait EventStoreSnapshotTxExt<Conn: Send>: crate::store::EventStoreTx<Conn> 
 }
 
 impl<T: crate::store::EventStoreTx<Conn> + ?Sized, Conn: Send> EventStoreSnapshotTxExt<Conn> for T {}
-
