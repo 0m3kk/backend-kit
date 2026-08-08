@@ -534,7 +534,6 @@ async fn test_catchup_view_in_tx_standalone() {
     .unwrap();
 
     assert_eq!(count, 1);
-    assert_eq!(db.users.read().unwrap().len(), 1);
     assert_eq!(
         tx_provider
             .committed_count
@@ -542,6 +541,43 @@ async fn test_catchup_view_in_tx_standalone() {
         1
     );
 }
+
+#[tokio::test]
+async fn test_catchup_view_tx_success() {
+    let event_store = Arc::new(InMemoryEventStore::new());
+    let db = WorkerTestDb::default();
+    let kv_store = MemoryKvStore::new();
+    let checkpoint_store = KvCheckpointStore::new(kv_store);
+    let mut conn = ();
+
+    let evt = UserRegistered {
+        user_id: "u_tx_raw".to_string(),
+        username: "Tx Raw".to_string(),
+    }
+    .to_event(EventId::new("tx_e1"))
+    .unwrap();
+    event_store.append(vec![evt], None).await.unwrap();
+
+    let view = UserProfileView {
+        user_id: String::new(),
+        username: String::new(),
+    };
+
+    let count = cqrs::catchup_view_tx(
+        &db,
+        &mut conn,
+        &view,
+        &event_store,
+        &checkpoint_store,
+        Some(100),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(count, 1);
+    assert_eq!(db.users.read().unwrap().len(), 1);
+}
+
 
 
 

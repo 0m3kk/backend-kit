@@ -202,7 +202,128 @@ where
     }
 }
 
+impl<C, ES, CP> CatchupWorker<C, ES, CP>
+where
+    C: Send + Sync + 'static,
+    ES: EventStore,
+    CP: CheckpointStore,
+{
+    /// Catch up a single registered view instance within an active transaction handle `conn: &mut Conn`.
+    pub async fn catchup_view_tx<Conn: Send, CPTx>(
+        &self,
+        conn: &mut Conn,
+        view: &dyn View<C>,
+        checkpoint_store_tx: &CPTx,
+        limit: Option<usize>,
+    ) -> Result<usize, ViewError>
+    where
+        ES: event_sourcing::EventStoreTx<Conn>,
+        CPTx: CheckpointStoreTx<Conn>,
+    {
+        catchup_view_tx(
+            &self.ctx,
+            conn,
+            view,
+            &self.event_store,
+            checkpoint_store_tx,
+            limit,
+        )
+        .await
+    }
+}
+
 pub use tx_manager::TransactionProvider;
+
+/// Catches up a single registered view instance to the latest events within an active transaction context.
+///
+/// Both `view.apply_event(&event, ctx)` and `checkpoint_store.save_position_tx(conn, ...)`
+/// execute against the active transaction connection `conn` and storage context `ctx`.
+///
+/// If any event in the catchup batch fails, the caller's transaction rolls back both
+/// the view table mutations and the checkpoint update atomically, ensuring zero partial projection state.
+pub async fn catchup_view_tx<C, ES, CP, Conn>(
+    ctx: &C,
+    conn: &mut Conn,
+    view: &dyn View<C>,
+    event_store: &ES,
+    checkpoint_store: &CP,
+    limit: Option<usize>,
+) -> Result<usize, ViewError>
+where
+    C: Send + Sync + 'static,
+    Conn: Send,
+    ES: event_sourcing::EventStoreTx<Conn>,
+    CP: CheckpointStoreTx<Conn>,
+{
+    let view_name = view.view_name();
+    let current_pos = checkpoint_store
+        .get_position_tx(conn, view_name)
+        .await
+        .map_err(|e| {
+            error!(view_name = view_name, error = %e, "Failed to read checkpoint position within transaction");
+            ViewError::Execution(e.to_string())
+        })?;
+
+    debug!(view_name = view_name, start_position = ?current_pos, "Starting transactional view catchup");
+
+    let query = view.subscription_query();
+
+    let mut read_opts = ReadOptions::new().direction(Direction::Forward);
+    if let Some(pos) = current_pos {
+        read_opts = read_opts.after(pos);
+    }
+    if let Some(lim) = limit {
+        read_opts = read_opts.limit(lim);
+    }
+
+    let events = event_store.read_tx(conn, &query, read_opts).await.map_err(|e| {
+        error!(view_name = view_name, error = %e, "Failed to read events from EventStoreTx within transaction");
+        ViewError::Execution(e.to_string())
+    })?;
+
+    let count = events.len();
+    if count == 0 {
+        debug!(
+            view_name = view_name,
+            "No new events to project for view within transaction"
+        );
+        return Ok(0);
+    }
+
+    let mut last_successful_pos = current_pos;
+
+    for event in &events {
+        debug!(
+            view_name = view_name,
+            event_id = %event.event.id.as_str(),
+            event_type = %event.event.event_type.as_str(),
+            position = %event.position,
+            "Applying event to view within transaction"
+        );
+
+        view.apply_event(event, ctx).await?;
+        last_successful_pos = Some(event.position);
+    }
+
+    if let Some(pos) = last_successful_pos {
+        checkpoint_store
+            .save_position_tx(conn, view_name, pos)
+            .await
+            .map_err(|e: CheckpointError| {
+                error!(view_name = view_name, position = %pos, error = %e, "Failed to save checkpoint position within transaction");
+                ViewError::Execution(e.to_string())
+            })?;
+
+        info!(
+            view_name = view_name,
+            processed_count = count,
+            new_position = %pos,
+            "Transactional view catchup completed successfully"
+        );
+    }
+
+    Ok(count)
+}
 
 /// Catches up a single view by self-managing the transaction lifecycle internally:
 /// 1. Begins transaction: `tx_provider.begin_tx().await`
@@ -459,7 +580,3 @@ where
         }
     }
 }
-
-
-
-

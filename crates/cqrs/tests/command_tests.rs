@@ -145,7 +145,7 @@ pub enum TransferMoneyError {
 }
 
 // -----------------------------------------------------------------------------
-// Command Implementations using Custom Owned Error Types
+// Command Implementations
 // -----------------------------------------------------------------------------
 
 pub struct RegisterUserCommand {
@@ -179,7 +179,6 @@ impl Command<Single<UserRegistrationModel>> for RegisterUserCommand {
     fn decide(
         &self,
         model: &UserRegistrationModel,
-        _ctx: &(),
     ) -> Result<Vec<Event>, RegisterUserError> {
         if model.is_registered {
             return Err(RegisterUserError::EmailAlreadyRegistered(
@@ -222,7 +221,7 @@ impl Command<Single<BankAccountModel>> for DepositMoneyCommand {
         Single(BankAccountModel::new(&self.account_id))
     }
 
-    fn decide(&self, _model: &BankAccountModel, _ctx: &()) -> Result<Vec<Event>, CommandError> {
+    fn decide(&self, _model: &BankAccountModel) -> Result<Vec<Event>, CommandError> {
         let event = MoneyDeposited {
             account_id: self.account_id.clone(),
             amount: self.amount,
@@ -266,7 +265,6 @@ impl Command<Pair<BankAccountModel, BankAccountModel>> for TransferMoneyCommand 
     fn decide(
         &self,
         (from_acc, _to_acc): &(BankAccountModel, BankAccountModel),
-        _ctx: &(),
     ) -> Result<Vec<Event>, TransferMoneyError> {
         if from_acc.balance < self.amount {
             return Err(TransferMoneyError::InsufficientBalance {
@@ -307,7 +305,7 @@ async fn test_single_model_command_lifecycle() {
         email: " ALICE@EXAMPLE.COM ".to_string(),
     };
 
-    let appended = dispatch_command(cmd, &store, &()).await.unwrap();
+    let appended = dispatch_command(cmd, &store).await.unwrap();
     assert_eq!(appended.len(), 1);
     assert_eq!(appended[0].position.value(), 1);
 
@@ -325,7 +323,7 @@ async fn test_command_owned_custom_error_type() {
         email: "alice@example.com".to_string(),
     };
 
-    let result = dispatch_command(cmd, &store, &()).await;
+    let result = dispatch_command(cmd, &store).await;
     assert!(result.is_err());
     match result.err().unwrap() {
         RegisterUserError::EmptyUserId => {}
@@ -343,7 +341,7 @@ async fn test_transfer_command_owned_insufficient_funds_error() {
         amount: 200,
     };
 
-    let result = dispatch_command(cmd, &store, &()).await;
+    let result = dispatch_command(cmd, &store).await;
     assert!(result.is_err());
     match result.err().unwrap() {
         TransferMoneyError::InsufficientBalance {
@@ -368,7 +366,7 @@ async fn test_multi_model_tuple_command_execution() {
         account_id: "acc_a".to_string(),
         amount: 500,
     };
-    dispatch_command(dep_cmd, &store, &()).await.unwrap();
+    dispatch_command(dep_cmd, &store).await.unwrap();
 
     // 2. Transfer 200 from Account A to Account B
     let transfer_cmd = TransferMoneyCommand {
@@ -377,7 +375,7 @@ async fn test_multi_model_tuple_command_execution() {
         amount: 200,
     };
 
-    let appended = dispatch_command(transfer_cmd, &store, &()).await.unwrap();
+    let appended = dispatch_command(transfer_cmd, &store).await.unwrap();
     assert_eq!(appended.len(), 2);
 }
 
@@ -391,7 +389,7 @@ async fn test_snapshot_backed_command_execution() {
         account_id: "acc_snap".to_string(),
         amount: 100,
     };
-    dispatch_command(cmd1, &store, &()).await.unwrap();
+    dispatch_command(cmd1, &store).await.unwrap();
 
     // 2. Second command runs with snapshot loading enabled (threshold 0)
     let cmd2 = DepositMoneyCommand {
@@ -400,7 +398,7 @@ async fn test_snapshot_backed_command_execution() {
     };
 
     let snapshot_opts = SnapshotOptions::new(0); // auto-snapshot when historical events read >= 0
-    let appended = dispatch_command_with_snapshot(cmd2, &store, &kv, snapshot_opts, &())
+    let appended = dispatch_command_with_snapshot(cmd2, &store, &kv, snapshot_opts)
         .await
         .unwrap();
 
@@ -415,3 +413,166 @@ async fn test_snapshot_backed_command_execution() {
     }
     assert_eq!(count, 1);
 }
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Clone, Default)]
+struct MockTxProvider {
+    pub active_tx_count: Arc<AtomicUsize>,
+    pub committed_count: Arc<AtomicUsize>,
+    pub rolled_back_count: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl tx_manager::TransactionProvider for MockTxProvider {
+    type Conn = ();
+    type Error = String;
+
+    async fn begin_tx(&self) -> Result<(), Self::Error> {
+        self.active_tx_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn commit_tx(&self, _conn: ()) -> Result<(), Self::Error> {
+        self.committed_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn rollback_tx(&self, _conn: ()) -> Result<(), Self::Error> {
+        self.rolled_back_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_command_in_tx_success() {
+    let store = InMemoryEventStore::new();
+    let tx_provider = MockTxProvider::default();
+
+    let cmd = RegisterUserCommand {
+        user_id: "u_tx_1".to_string(),
+        email: "tx1@example.com".to_string(),
+    };
+
+    let appended = cqrs::dispatch_command_in_tx(cmd, &store, &tx_provider)
+        .await
+        .unwrap();
+
+    assert_eq!(appended.len(), 1);
+    assert_eq!(tx_provider.committed_count.load(Ordering::SeqCst), 1);
+    assert_eq!(tx_provider.rolled_back_count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn test_dispatch_command_in_tx_rollback_on_domain_error() {
+    let store = InMemoryEventStore::new();
+    let tx_provider = MockTxProvider::default();
+
+    let cmd = RegisterUserCommand {
+        user_id: "".to_string(), // Invalid validation
+        email: "invalid".to_string(),
+    };
+
+    let result = cqrs::dispatch_command_in_tx(cmd, &store, &tx_provider).await;
+    assert!(result.is_err());
+    assert_eq!(tx_provider.rolled_back_count.load(Ordering::SeqCst), 1);
+    assert_eq!(tx_provider.committed_count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn test_command_dispatcher_tx_struct() {
+    let store = InMemoryEventStore::new();
+    let tx_provider = MockTxProvider::default();
+    let dispatcher = cqrs::CommandDispatcherTx::new(store, tx_provider.clone());
+
+    let cmd = RegisterUserCommand {
+        user_id: "u_disp_1".to_string(),
+        email: "disp@example.com".to_string(),
+    };
+
+    let appended = dispatcher.dispatch(cmd).await.unwrap();
+    assert_eq!(appended.len(), 1);
+    assert_eq!(tx_provider.committed_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn test_dispatch_command_with_snapshot_in_tx_success() {
+    let store = InMemoryEventStore::new();
+    let kv = MemoryKvStore::new();
+    let tx_provider = MockTxProvider::default();
+
+    let cmd1 = DepositMoneyCommand {
+        account_id: "acc_tx_snap".to_string(),
+        amount: 300,
+    };
+    cqrs::dispatch_command_in_tx(cmd1, &store, &tx_provider)
+        .await
+        .unwrap();
+
+    let cmd2 = DepositMoneyCommand {
+        account_id: "acc_tx_snap".to_string(),
+        amount: 200,
+    };
+    let appended = cqrs::dispatch_command_with_snapshot_in_tx(
+        cmd2,
+        &store,
+        &kv,
+        &tx_provider,
+        SnapshotOptions::new(0),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(appended.len(), 1);
+    assert_eq!(tx_provider.committed_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn test_dispatch_command_tx_success() {
+    let store = InMemoryEventStore::new();
+    let mut conn = ();
+
+    let cmd = RegisterUserCommand {
+        user_id: "u_tx_raw_1".to_string(),
+        email: "raw1@example.com".to_string(),
+    };
+
+    let appended = cqrs::dispatch_command_tx(cmd, &store, &mut conn)
+        .await
+        .unwrap();
+
+    assert_eq!(appended.len(), 1);
+}
+
+#[tokio::test]
+async fn test_dispatch_command_with_snapshot_tx_success() {
+    let store = InMemoryEventStore::new();
+    let kv = MemoryKvStore::new();
+    let mut conn = ();
+
+    let cmd1 = DepositMoneyCommand {
+        account_id: "acc_raw_snap".to_string(),
+        amount: 500,
+    };
+    cqrs::dispatch_command_tx(cmd1, &store, &mut conn)
+        .await
+        .unwrap();
+
+    let cmd2 = DepositMoneyCommand {
+        account_id: "acc_raw_snap".to_string(),
+        amount: 250,
+    };
+    let appended = cqrs::dispatch_command_with_snapshot_tx(
+        cmd2,
+        &store,
+        &kv,
+        &mut conn,
+        SnapshotOptions::new(0),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(appended.len(), 1);
+}
+
