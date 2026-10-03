@@ -1,0 +1,37 @@
+[package]
+name = "event-store"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "DCB compliant event store: types, trait, and PostgreSQL implementation"
+readme = "README.md"
+
+[features]
+test-runtime = ["tokio/rt"]
+
+[dependencies]
+async-stream = "0.3"
+async-trait = "0.1"
+futures-core = "0.3"
+mockall = "0.15"
+opentelemetry = "0.33"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+    "migrate",
+    "macros",
+] }
+time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+futures-util = "0.3"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+

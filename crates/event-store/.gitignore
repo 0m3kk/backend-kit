@@ -1,0 +1,8 @@
+# .gitignore for event-store
+target/
+**/*.rs.bk
+*.user
+*.db
+.env
+.idea/
+.vscode/

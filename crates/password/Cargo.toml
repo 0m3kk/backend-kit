@@ -1,0 +1,17 @@
+[package]
+name = "password"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Password policy validation and Argon2id hashing"
+readme = "README.md"
+
+[dependencies]
+argon2 = "0.6"
+password-hash = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

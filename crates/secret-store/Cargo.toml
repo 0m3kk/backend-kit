@@ -1,0 +1,30 @@
+[package]
+name = "secret-store"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Secret store: types, trait, keyring, envelope encryption, and PostgreSQL implementation"
+readme = "README.md"
+
+[dependencies]
+aead = "0.6"
+aes-gcm = "0.11"
+argon2 = "0.6"
+async-trait = "0.1"
+mockall = "0.15"
+rand = "0.10"
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+    "migrate",
+    "macros",
+] }
+zeroize = "1.9"
+opentelemetry = "0.33"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

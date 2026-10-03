@@ -1,0 +1,27 @@
+[package]
+name = "telemetry"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "OpenTelemetry tracing, metrics, OTLP export, and W3C context propagation"
+readme = "README.md"
+
+[dependencies]
+opentelemetry = { version = "0.33", features = ["logs", "metrics"] }
+opentelemetry-appender-tracing = "0.33"
+opentelemetry-otlp = { version = "0.33", features = ["grpc-tonic", "logs", "metrics"] }
+opentelemetry-semantic-conventions = "0.33"
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio", "logs", "metrics"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+tonic = { version = "0.14", default-features = false }
+tracing-opentelemetry = "0.34"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

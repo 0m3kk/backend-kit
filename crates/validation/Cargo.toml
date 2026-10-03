@@ -1,0 +1,15 @@
+[package]
+name = "validation"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Shared validation functions and helpers"
+readme = "README.md"
+
+[dependencies]
+uuid = { version = "1", features = ["v7"] }
+validator = "0.21"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

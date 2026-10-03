@@ -1,0 +1,21 @@
+[package]
+name = "webauthn"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "WebAuthn and Passkeys authentication service, configuration, and helpers"
+readme = "README.md"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+url = { version = "2", features = ["serde"] }
+utoipa = "6"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+webauthn-rs = { version = "0.5.5", features = ["danger-allow-state-serialisation", "conditional-ui"] }
+webauthn-rs-proto = "0.5.5"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
