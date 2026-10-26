@@ -1,5 +1,6 @@
 //! DCB compliant event store: types, [`EventStore`] trait, and PostgreSQL implementation.
 
+mod domain_event;
 mod error;
 mod event;
 mod metadata;
@@ -7,6 +8,7 @@ mod postgres;
 mod query;
 mod store;
 
+pub use domain_event::{DomainEvent, tag_value};
 pub use error::{AppendConditionError, Error};
 pub use event::{Event, SequencePosition, SequencedEvent, Tags};
 pub use futures_core::Stream;
