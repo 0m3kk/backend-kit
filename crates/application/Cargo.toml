@@ -3,7 +3,7 @@ name = "application"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Generic application-layer primitives: execution context and event metadata helpers"
+description = "Generic application-layer primitives: execution context and decision-state loading"
 readme = "README.md"
 
 [dependencies]

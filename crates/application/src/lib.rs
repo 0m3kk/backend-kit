@@ -4,4 +4,4 @@ pub mod context;
 pub mod state;
 
 pub use context::ExecutionContext;
-pub use state::{State, StateLoadError, StateLoader};
+pub use state::{Decision, State, StateLoadError, StateLoader, StateSet};
