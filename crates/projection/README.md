@@ -2,17 +2,18 @@
 
 Reusable projection primitives for event-sourced services.
 
-## Table
+## Migrations
 
-`PostgresCheckpointStore` expects a `projection_checkpoints` table:
+`PostgresCheckpointStore` requires a `projection_checkpoints` table, which ships
+as an embedded migration. Run it when the projection is initialized:
 
-```sql
-CREATE TABLE IF NOT EXISTS projection_checkpoints (
-    view_name           TEXT PRIMARY KEY,
-    last_event_position BIGINT NOT NULL DEFAULT 0,
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+```rust
+projection::migrator().run(&pool).await?;
 ```
+
+`migrator()` records applied migrations in `_projection_migrations`, so it does
+not interfere with an application's own migrations in `_sqlx_migrations`.
+`PROJECTION_MIGRATOR` is available for tests that use `#[sqlx::test]`.
 
 ## View contract
 

@@ -4,6 +4,23 @@ use event_store::SequencePosition;
 use sqlx::PgPool;
 use thiserror::Error;
 
+/// Embedded database migrations for projection checkpoints.
+///
+/// This uses the default `_sqlx_migrations` table, so applications that own
+/// migrations of their own should prefer [`migrator`].
+pub static PROJECTION_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Returns the projection migrations with a dedicated migration table.
+///
+/// The crate keeps its bookkeeping in `_projection_migrations`, so running
+/// these migrations cannot conflict with an application's own migrations in
+/// `_sqlx_migrations`.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.dangerous_set_table_name("_projection_migrations");
+    migrator
+}
+
 /// Stores the last processed event position for a named projection.
 pub trait CheckpointStore: Send + Sync {
     /// Error type of the underlying store.

@@ -12,6 +12,8 @@ futures-util = "0.3"
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
     "postgres",
+    "migrate",
+    "macros",
 ] }
 thiserror = "2"
 
