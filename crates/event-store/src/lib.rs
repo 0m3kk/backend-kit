@@ -16,3 +16,6 @@ pub use metadata::EventMetadata;
 pub use postgres::{EVENT_STORE_MIGRATOR, PostgresEventStore, migrator};
 pub use query::{AppendCondition, Query, QueryItem};
 pub use store::{EventStore, EventStream, MockEventStore};
+
+/// PostgreSQL notification channel emitted after an event is appended.
+pub const EVENTS_NOTIFY_CHANNEL: &str = "events_appended";

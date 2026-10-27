@@ -50,3 +50,72 @@ run_catchup_loop(&worker, &view, config, shutdown).await;
 
 `CatchupConfig::from_env` reads whole seconds. Missing, invalid, and zero values
 fall back to `DEFAULT_CATCHUP_INTERVAL` (5 seconds).
+
+## Wake-ups and notifications
+
+`run_catchup_loop_with_wake` adds an immediate wake-up source to the loop. The
+`event-store` crate installs an `AFTER INSERT` trigger that emits
+`NOTIFY events_appended`, and `spawn_listener` turns those notifications into
+wake signals:
+
+```rust
+use tokio::sync::{broadcast, watch};
+
+use projection::{CatchupConfig, spawn_listener, run_catchup_loop_with_wake};
+
+let (wake_tx, _) = broadcast::channel(1);
+let listener = spawn_listener(
+    pool.clone(),
+    event_store::EVENTS_NOTIFY_CHANNEL,
+    wake_tx.clone(),
+    shutdown_rx.clone(),
+);
+
+let config = CatchupConfig::from_env("PROJECTION_WORKER_INTERVAL_SECONDS")
+    .with_debounce(Duration::from_millis(50));
+
+run_catchup_loop_with_wake(
+    &worker,
+    &view,
+    config,
+    wake_tx.subscribe(),
+    shutdown,
+)
+.await;
+
+let _ = listener.await;
+```
+
+- Notifications are coalesced by the debounce window (default 50 ms).
+- The polling ticker remains active as the safety net.
+- The listener reconnects with exponential backoff and emits a wake signal after
+  reconnecting, because notifications sent while disconnected are lost.
+- The listener holds one connection from the pool.
+- The worker also holds one connection for the leader lock and uses the pool
+  for event reads and checkpoints. Size the pool for at least three concurrent
+  connections.
+
+## Leader election
+
+`LeaderGuard` wraps `pg_try_advisory_lock` for active-passive workers:
+
+```rust
+use projection::LeaderGuard;
+
+let guard = LeaderGuard::acquire(&pool, lock_id, retry_interval, &mut shutdown_rx).await?;
+if guard.is_none() && lock_id > 0 {
+    return Ok(()); // another worker is active
+}
+
+// ... run the worker loops ...
+
+if let Some(guard) = guard {
+    guard.release().await;
+}
+```
+
+A non-positive `lock_id` disables leader election. The guard keeps a dedicated
+connection alive because the lock is session-level. If that connection is lost,
+PostgreSQL releases the lock and a standby can take over; treat the lock
+connection as part of the worker's health and restart the worker if the database
+connection is unstable.

@@ -10,6 +10,7 @@ High-performance, production-ready, [DCB (Dynamic Consistency Boundary)](https:/
 - 🐘 **PostgreSQL Engine**: Built-in [`PostgresEventStore`] with optimistic concurrency control, serializable isolation support, and batch operations.
 - ⚡ **Stream Powered**: Async streaming querying powered by `tokio` and `async-stream`.
 - 📊 **OpenTelemetry Built-in**: Out-of-the-box metrics (`appends_total`, `append_duration_seconds`, `read_duration_seconds`, etc.).
+- 🔔 **Append Notifications**: Ships a migration that emits `NOTIFY events_appended` after each insert, so projection workers can wake immediately instead of polling.
 - 🧪 **Mocking Ready**: Ships with [`MockEventStore`] generated via `mockall` for seamless unit testing.
 
 ---
@@ -69,6 +70,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+---
+
+## 🔔 Notifications
+
+The embedded migrations install an `AFTER INSERT` trigger on `events` that runs
+`pg_notify('events_appended', NEW.event_type)`. The channel name is exported as
+[`EVENTS_NOTIFY_CHANNEL`].
+
+Notifications are delivered after commit. They are hints, not a durability
+mechanism: listeners should always catch up from their checkpoint and keep a
+polling fallback for lost notifications.
 
 ---
 
