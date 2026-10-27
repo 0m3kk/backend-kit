@@ -15,7 +15,21 @@ use crate::value::SecretBytes;
 const ROTATE_BATCH_SIZE: i64 = 1000;
 
 /// Embedded database migrations.
+///
+/// This uses the default `_sqlx_migrations` table, so applications that own
+/// migrations of their own should prefer [`migrator`].
 pub static SECRET_STORE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Returns the secret store migrations with a dedicated migration table.
+///
+/// The store keeps its bookkeeping in `_secret_store_migrations`, so running
+/// these migrations cannot conflict with an application's own migrations in
+/// `_sqlx_migrations`.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.dangerous_set_table_name("_secret_store_migrations");
+    migrator
+}
 
 #[derive(Clone)]
 struct SecretStoreMetrics {

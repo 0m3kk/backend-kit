@@ -13,8 +13,21 @@ use crate::value::{ReplacedValue, StoredValue};
 /// Embedded database migrations.
 ///
 /// Run them once against the database before using the store, e.g.
-/// `KV_STORE_MIGRATOR.run(&pool).await`.
+/// `KV_STORE_MIGRATOR.run(&pool).await`. This uses the default
+/// `_sqlx_migrations` table, so applications that own migrations of their own
+/// should prefer [`migrator`].
 pub static KV_STORE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Returns the key-value store migrations with a dedicated migration table.
+///
+/// The store keeps its bookkeeping in `_kv_store_migrations`, so running these
+/// migrations cannot conflict with an application's own migrations in
+/// `_sqlx_migrations`.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.dangerous_set_table_name("_kv_store_migrations");
+    migrator
+}
 
 #[derive(Clone)]
 struct KvStoreMetrics {

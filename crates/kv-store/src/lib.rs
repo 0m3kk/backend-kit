@@ -8,6 +8,6 @@ mod value;
 
 pub use condition::PutCondition;
 pub use error::{Error, PutConditionError};
-pub use postgres::{KV_STORE_MIGRATOR, PostgresKvStore};
+pub use postgres::{KV_STORE_MIGRATOR, PostgresKvStore, migrator};
 pub use store::{KvStore, MockKvStore};
 pub use value::{ReplacedValue, StoredValue, Timestamp};

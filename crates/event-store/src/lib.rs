@@ -13,6 +13,6 @@ pub use error::{AppendConditionError, Error};
 pub use event::{Event, SequencePosition, SequencedEvent, Tags};
 pub use futures_core::Stream;
 pub use metadata::EventMetadata;
-pub use postgres::{EVENT_STORE_MIGRATOR, PostgresEventStore};
+pub use postgres::{EVENT_STORE_MIGRATOR, PostgresEventStore, migrator};
 pub use query::{AppendCondition, Query, QueryItem};
 pub use store::{EventStore, EventStream, MockEventStore};

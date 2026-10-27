@@ -4,7 +4,21 @@ use sqlx::{PgPool, Row};
 use crate::{Snapshot, SnapshotStore};
 
 /// Embedded database migrations for snapshots.
+///
+/// This uses the default `_sqlx_migrations` table, so applications that own
+/// migrations of their own should prefer [`migrator`].
 pub static SNAPSHOT_STORE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Returns the snapshot store migrations with a dedicated migration table.
+///
+/// The store keeps its bookkeeping in `_snapshot_store_migrations`, so running
+/// these migrations cannot conflict with an application's own migrations in
+/// `_sqlx_migrations`.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.dangerous_set_table_name("_snapshot_store_migrations");
+    migrator
+}
 
 /// A PostgreSQL-backed snapshot store.
 #[derive(Debug, Clone)]

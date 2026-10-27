@@ -19,8 +19,21 @@ const READ_BATCH_SIZE: i64 = 500;
 /// Embedded database migrations.
 ///
 /// Run them once against the database before using the store, e.g.
-/// `EVENT_STORE_MIGRATOR.run(&pool).await`.
+/// `EVENT_STORE_MIGRATOR.run(&pool).await`. This uses the default
+/// `_sqlx_migrations` table, so applications that own migrations of their own
+/// should prefer [`migrator`].
 pub static EVENT_STORE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Returns the event store migrations with a dedicated migration table.
+///
+/// The store keeps its bookkeeping in `_event_store_migrations`, so running
+/// these migrations cannot conflict with an application's own migrations in
+/// `_sqlx_migrations`.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.dangerous_set_table_name("_event_store_migrations");
+    migrator
+}
 
 #[derive(Clone)]
 struct EventStoreMetrics {
