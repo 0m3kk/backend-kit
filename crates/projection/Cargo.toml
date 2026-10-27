@@ -1,0 +1,24 @@
+[package]
+name = "projection"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Projection checkpoints, view contract, and catch-up worker"
+readme = "README.md"
+
+[dependencies]
+event-store = { path = "../event-store" }
+futures-util = "0.3"
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+] }
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

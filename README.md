@@ -8,6 +8,7 @@ Composable building blocks for Rust backend services — HTTP, authentication, p
 
 | Crate | Description |
 | --- | --- |
+| 🧩 [`application`](crates/application) | Generic application primitives: execution context and event metadata helpers |
 | ⚡ [`event-store`](crates/event-store) | DCB compliant event store: types, trait, and PostgreSQL implementation |
 | 🌐 [`http-server`](crates/http-server) | HTTP router initialization, middleware, OpenAPI, and server configuration |
 | 🎫 [`jwt`](crates/jwt) | Generic JSON Web Token (JWT) generation, verification, and configuration |
@@ -16,13 +17,16 @@ Composable building blocks for Rust backend services — HTTP, authentication, p
 | 🔑 [`oidc`](crates/oidc) | OpenID Connect (OIDC) authentication service, configuration, and helpers |
 | 🔒 [`password`](crates/password) | Password policy validation and Argon2id hashing |
 | 🐘 [`postgres-db`](crates/postgres-db) | PostgreSQL configuration, secrets, and connection management |
+| 🔁 [`projection`](crates/projection) | Projection checkpoints, view contract, and catch-up worker |
 | 🔐 [`secret-store`](crates/secret-store) | Secret store: types, trait, keyring, envelope encryption, and PostgreSQL implementation |
 | 📸 [`snapshot-store`](crates/snapshot-store) | Snapshot store: types, trait, and PostgreSQL implementation |
 | 📊 [`telemetry`](crates/telemetry) | OpenTelemetry tracing, metrics, OTLP export, and W3C context propagation |
 | ✅ [`validation`](crates/validation) | Shared validation functions and helpers |
 | 🛡️ [`webauthn`](crates/webauthn) | WebAuthn and Passkeys authentication service, configuration, and helpers |
 
-Crates depend on each other by path: `postgres-db` uses `telemetry`, and `snapshot-store` uses `event-store`.
+Crates depend on each other by path: `application` and `projection` use
+`event-store`, `postgres-db` uses `telemetry`, and `snapshot-store` uses
+`event-store`.
 
 ---
 
