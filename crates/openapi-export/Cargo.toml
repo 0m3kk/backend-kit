@@ -1,0 +1,16 @@
+[package]
+name = "openapi-export"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Serialize and write utoipa OpenAPI documents, with a small CLI runner"
+readme = "README.md"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+utoipa = { version = "6", features = ["yaml"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
