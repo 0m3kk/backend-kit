@@ -11,8 +11,8 @@ use crate::event::{Event, SequencePosition, SequencedEvent};
 use crate::query::{AppendCondition, Query, QueryItem};
 use crate::store::{EventStore, EventStream};
 
-const MAX_RETRIES: u32 = 3;
-const RETRY_DELAY: Duration = Duration::from_millis(50);
+const MAX_RETRIES: u32 = 10;
+const BASE_RETRY_DELAY: Duration = Duration::from_millis(20);
 const INSERT_BATCH_SIZE: usize = 2_000;
 const READ_BATCH_SIZE: i64 = 500;
 
@@ -214,8 +214,9 @@ impl EventStore for PostgresEventStore {
                         return Err(e);
                     }
 
-                    if !is_last_attempt && is_serialization_failure(&e) {
-                        tokio::time::sleep(RETRY_DELAY).await;
+                    if !is_last_attempt && is_retryable_conflict(&e) {
+                        let delay = BASE_RETRY_DELAY.saturating_mul(1u32 << (attempts - 1).min(5));
+                        tokio::time::sleep(delay).await;
                         continue;
                     }
 
@@ -379,9 +380,9 @@ fn row_to_sequenced(row: sqlx::postgres::PgRow) -> SequencedEvent {
     }
 }
 
-fn is_serialization_failure(error: &Error<sqlx::Error>) -> bool {
+fn is_retryable_conflict(error: &Error<sqlx::Error>) -> bool {
     if let Error::Store(sqlx::Error::Database(db_error)) = error {
-        return db_error.code().as_deref() == Some("40001");
+        return matches!(db_error.code().as_deref(), Some("40001" | "40P01"));
     }
     false
 }

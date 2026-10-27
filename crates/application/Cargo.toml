@@ -8,10 +8,14 @@ readme = "README.md"
 
 [dependencies]
 event-store = { path = "../event-store" }
+futures-util = "0.3"
+serde = "1.0"
 serde_json = "1.0"
+snapshot-store = { path = "../snapshot-store" }
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
 
 [lints.clippy]
 unwrap_used = "deny"

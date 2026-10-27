@@ -125,8 +125,11 @@ name = "application"
 version = "0.1.0"
 dependencies = [
  "event-store",
+ "futures-util",
  "serde",
  "serde_json",
+ "snapshot-store",
+ "tokio",
 ]
 
 [[package]]
