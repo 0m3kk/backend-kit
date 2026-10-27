@@ -36,6 +36,26 @@ impl PostgresSnapshotStore {
         }
     }
 
+    /// Runs the embedded snapshot-store migrations against `pool`.
+    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+        migrator().run(pool).await
+    }
+
+    /// Runs the embedded migrations and creates a store backed by `pool`.
+    pub async fn init(pool: &PgPool) -> Result<Self, sqlx::migrate::MigrateError> {
+        Self::migrate(pool).await?;
+        Ok(Self::new(pool.clone()))
+    }
+
+    /// Runs the embedded migrations and creates a store that snapshots after
+    /// at least `threshold` events.
+    pub async fn init_with_threshold(
+        pool: &PgPool,
+        threshold: u64,
+    ) -> Result<Self, sqlx::migrate::MigrateError> {
+        Ok(Self::init(pool).await?.with_threshold(threshold))
+    }
+
     /// Configure a minimum event threshold before saving snapshots.
     pub fn with_threshold(mut self, threshold: u64) -> Self {
         self.threshold = Some(threshold);

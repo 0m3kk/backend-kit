@@ -76,6 +76,17 @@ impl PostgresEventStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    /// Runs the embedded event-store migrations against `pool`.
+    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+        migrator().run(pool).await
+    }
+
+    /// Runs the embedded migrations and creates a store backed by `pool`.
+    pub async fn init(pool: &PgPool) -> Result<Self, sqlx::migrate::MigrateError> {
+        Self::migrate(pool).await?;
+        Ok(Self::new(pool.clone()))
+    }
 }
 
 #[async_trait]

@@ -9,6 +9,8 @@ Composable building blocks for Rust backend services — HTTP, authentication, p
 | Crate | Description |
 | --- | --- |
 | 🧩 [`application`](crates/application) | Generic application primitives: execution context and event metadata helpers |
+| 🔐 [`auth`](crates/auth) | JWT authentication middleware for axum services |
+| 📄 [`config-loader`](crates/config-loader) | File and environment based configuration loading |
 | ⚡ [`event-store`](crates/event-store) | DCB compliant event store: types, trait, and PostgreSQL implementation |
 | 🌐 [`http-server`](crates/http-server) | HTTP router initialization, middleware, OpenAPI, and server configuration |
 | 🎫 [`jwt`](crates/jwt) | Generic JSON Web Token (JWT) generation, verification, and configuration |
@@ -25,8 +27,8 @@ Composable building blocks for Rust backend services — HTTP, authentication, p
 | 🛡️ [`webauthn`](crates/webauthn) | WebAuthn and Passkeys authentication service, configuration, and helpers |
 
 Crates depend on each other by path: `application` and `projection` use
-`event-store`, `postgres-db` uses `telemetry`, and `snapshot-store` uses
-`event-store`.
+`event-store`, `auth` uses `http-server` and `jwt`, `postgres-db` uses
+`telemetry`, and `snapshot-store` uses `event-store`.
 
 ---
 

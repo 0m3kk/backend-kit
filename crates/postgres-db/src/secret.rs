@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ENV_DATABASE_URL;
+
 /// PostgreSQL authentication credentials.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PostgresSecret {
@@ -35,6 +37,32 @@ impl Default for PostgresSecret {
             username: default_username(),
             password: default_password(),
         }
+    }
+}
+
+impl PostgresSecret {
+    /// Applies the username and password from the `DATABASE_URL` environment
+    /// variable, when it is set.
+    pub fn apply_database_url_env(&mut self) -> Result<(), url::ParseError> {
+        match std::env::var(ENV_DATABASE_URL) {
+            Ok(url) => self.apply_database_url(&url),
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// Applies the username and password from a connection URL.
+    pub fn apply_database_url(&mut self, url: &str) -> Result<(), url::ParseError> {
+        let parsed = url::Url::parse(url)?;
+
+        let username = parsed.username();
+        if !username.is_empty() {
+            self.username = username.to_string();
+        }
+        if let Some(password) = parsed.password() {
+            self.password = password.to_string();
+        }
+
+        Ok(())
     }
 }
 
@@ -77,5 +105,22 @@ mod tests {
         let debug_str = format!("{secret:?}");
         assert!(!debug_str.contains("super_secret_password"));
         assert!(debug_str.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn applies_database_url() -> Result<(), Box<dyn std::error::Error>> {
+        let mut secret = PostgresSecret::default();
+
+        secret.apply_database_url("postgres://catalog:secret@db.example.com:5432/dev")?;
+
+        assert_eq!(secret.username, "catalog");
+        assert_eq!(secret.password, "secret");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_malformed_database_url() {
+        let mut secret = PostgresSecret::default();
+        assert!(secret.apply_database_url("not a url").is_err());
     }
 }

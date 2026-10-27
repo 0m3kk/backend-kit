@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use sqlx::postgres::PgConnectOptions;
 
+use crate::ENV_DATABASE_URL;
 use crate::PostgresSecret;
 use crate::connection;
 
@@ -50,6 +51,33 @@ impl PostgresConfig {
     /// Initializes a PostgreSQL connection pool using provided credentials.
     pub async fn init_pool(&self, secret: &PostgresSecret) -> Result<PgPool, sqlx::Error> {
         connection::init_pool(self, secret).await
+    }
+
+    /// Applies host, port, and database from the `DATABASE_URL` environment
+    /// variable, when it is set.
+    pub fn apply_database_url_env(&mut self) -> Result<(), url::ParseError> {
+        match std::env::var(ENV_DATABASE_URL) {
+            Ok(url) => self.apply_database_url(&url),
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// Applies host, port, and database from a connection URL.
+    pub fn apply_database_url(&mut self, url: &str) -> Result<(), url::ParseError> {
+        let parsed = url::Url::parse(url)?;
+
+        if let Some(host) = parsed.host_str() {
+            self.host = host.to_string();
+        }
+        if let Some(port) = parsed.port() {
+            self.port = port;
+        }
+        let database = parsed.path().trim_start_matches('/');
+        if !database.is_empty() {
+            self.database = database.to_string();
+        }
+
+        Ok(())
     }
 }
 
@@ -146,5 +174,23 @@ mod tests {
         assert_eq!(config.connect_timeout_secs, 10);
         assert_eq!(config.idle_timeout_secs, 300);
         assert_eq!(config.max_lifetime_secs, 900);
+    }
+
+    #[test]
+    fn applies_database_url() -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = PostgresConfig::default();
+
+        config.apply_database_url("postgres://postgres:password@db.example.com:6543/catalog")?;
+
+        assert_eq!(config.host, "db.example.com");
+        assert_eq!(config.port, 6543);
+        assert_eq!(config.database, "catalog");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_malformed_database_url() {
+        let mut config = PostgresConfig::default();
+        assert!(config.apply_database_url("not a url").is_err());
     }
 }

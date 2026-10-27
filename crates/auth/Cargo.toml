@@ -1,0 +1,17 @@
+[package]
+name = "auth"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "JWT authentication middleware for axum services"
+readme = "README.md"
+
+[dependencies]
+axum = "0.8"
+http-server = { path = "../http-server" }
+jwt = { path = "../jwt" }
+serde = { version = "1.0", features = ["derive"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

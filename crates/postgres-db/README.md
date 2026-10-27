@@ -10,6 +10,7 @@ Production-ready PostgreSQL configuration, secrets, connection pooling, and Open
 - 🔒 **Credentials & SSL**: Flexible authentication ([`PostgresSecret`]) supporting SSL modes (Disable, Prefer, Require).
 - 📊 **OpenTelemetry Pool Monitoring**: Built-in background monitor ([`spawn_pool_metrics_monitor`]) reporting pool size, idle, and active connections.
 - 🛡️ **Zeroize / Redaction**: Sensitive database password strings are safely redacted in debug logs.
+- 🌍 **`DATABASE_URL` overrides**: `apply_database_url_env` maps a connection URL onto config and secret.
 
 ---
 

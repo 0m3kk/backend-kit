@@ -65,6 +65,18 @@ impl PostgresCheckpointStore {
         Self { pool }
     }
 
+    /// Runs the embedded projection migrations against `pool`.
+    pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+        migrator().run(pool).await
+    }
+
+    /// Runs the embedded migrations and creates a checkpoint store backed by
+    /// `pool`.
+    pub async fn init(pool: &PgPool) -> Result<Self, sqlx::migrate::MigrateError> {
+        Self::migrate(pool).await?;
+        Ok(Self::new(pool.clone()))
+    }
+
     /// Returns the pool used by this store.
     pub fn pool(&self) -> &PgPool {
         &self.pool
