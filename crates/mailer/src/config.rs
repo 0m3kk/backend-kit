@@ -39,7 +39,10 @@ impl Default for SmtpConfig {
         Self {
             host: "localhost".to_string(),
             port: 587,
-            tls: false,
+            // Keep the struct default consistent with the serde default for
+            // `tls`. An omitted `mailer.smtp` section must not silently disable
+            // TLS when `provider: smtp`.
+            tls: true,
         }
     }
 }
@@ -112,7 +115,7 @@ fn default_frontend_base_url() -> String {
 }
 
 fn default_templates_dir() -> String {
-    std::env::var(ENV_TEMPLATES_DIR).unwrap_or_else(|_| "rsc/templates/emails".to_string())
+    "rsc/templates/emails".to_string()
 }
 
 impl MailerConfig {
@@ -140,6 +143,11 @@ impl Default for MailerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smtp_default_keeps_tls_enabled() {
+        assert!(SmtpConfig::default().tls);
+    }
 
     #[test]
     fn debug_redacts_smtp_password() {

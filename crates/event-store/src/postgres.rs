@@ -14,8 +14,21 @@ use crate::store::{EventStore, EventStream};
 
 const MAX_RETRIES: u32 = 10;
 const BASE_RETRY_DELAY: Duration = Duration::from_millis(20);
-const INSERT_BATCH_SIZE: usize = 2_000;
 const READ_BATCH_SIZE: i64 = 500;
+
+/// Advisory lock key that serializes appends for one event store.
+///
+/// PostgreSQL sequences allocate a position when the row is inserted, not when
+/// the transaction commits. Two concurrent appends can therefore commit in the
+/// opposite order of their positions. A projection that advances its checkpoint
+/// by position would then skip the event that committed late, permanently.
+///
+/// Taking this transaction-scoped lock before allocating the position makes
+/// commit order match position order. The tradeoff is that appends are
+/// serialized per event store, which is the usual price for a totally ordered
+/// global log. Use a different database (or a different key in a fork) for each
+/// independent event store.
+pub const APPEND_LOCK_ID: i64 = 6_432_101_973_551_001;
 
 /// Embedded database migrations.
 ///
@@ -187,6 +200,13 @@ impl EventStore for PostgresEventStore {
                 .await
                 .map_err(Error::Store)?;
 
+            // Acquire before the insert so the sequence value and the commit
+            // are ordered with every other append to this store.
+            if let Err(error) = acquire_append_lock(tx.conn()).await {
+                tx.rollback().await;
+                return Err(Error::Store(error));
+            }
+
             let result = match append_events_within_transaction(
                 tx.conn(),
                 try_events,
@@ -319,7 +339,7 @@ async fn append_events_within_transaction(
         enforce_append_condition(conn, condition).await?;
     }
 
-    execute_bulk_insert(conn, events).await
+    insert_events(conn, events).await
 }
 
 async fn enforce_append_condition(
@@ -352,37 +372,42 @@ async fn enforce_append_condition(
     Ok(())
 }
 
-async fn execute_bulk_insert(
+async fn acquire_append_lock(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(APPEND_LOCK_ID)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Inserts events one at a time so each returned position is unambiguously
+/// associated with its event.
+///
+/// A single multi-row `INSERT ... RETURNING position` does not guarantee that
+/// rows are returned in `VALUES` order, so zipping the input with the result
+/// could pair an event with another event's position. The append lock already
+/// serializes writers, so the extra round trips are acceptable for correctness.
+async fn insert_events(
     conn: &mut PgConnection,
     events: Vec<Event>,
 ) -> Result<Vec<SequencedEvent>, Error<sqlx::Error>> {
     let mut sequenced = Vec::with_capacity(events.len());
-    let mut events_iter = events.into_iter();
 
-    loop {
-        let chunk: Vec<Event> = events_iter.by_ref().take(INSERT_BATCH_SIZE).collect();
-        if chunk.is_empty() {
-            break;
-        }
+    for event in events {
+        let row = sqlx::query(
+            "INSERT INTO events (event_type, data, metadata, tags) \
+             VALUES ($1, $2, $3, $4) RETURNING position",
+        )
+        .bind(&event.event_type)
+        .bind(&event.data)
+        .bind(&event.metadata)
+        .bind(&event.tags)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(Error::Store)?;
 
-        let mut qb = QueryBuilder::new("INSERT INTO events (event_type, data, metadata, tags) ");
-        qb.push_values(&chunk, |mut b, event| {
-            b.push_bind(&event.event_type)
-                .push_bind(&event.data)
-                .push_bind(&event.metadata)
-                .push_bind(&event.tags);
-        });
-        qb.push(" RETURNING position");
-
-        let rows = qb
-            .build()
-            .fetch_all(&mut *conn)
-            .await
-            .map_err(Error::Store)?;
-        for (event, row) in chunk.into_iter().zip(rows) {
-            let position = row.get::<i64, _>(0) as u64;
-            sequenced.push(SequencedEvent { event, position });
-        }
+        let position = row.get::<i64, _>(0) as u64;
+        sequenced.push(SequencedEvent { event, position });
     }
 
     Ok(sequenced)

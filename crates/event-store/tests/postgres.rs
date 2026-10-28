@@ -6,6 +6,8 @@
 use event_store::{
     AppendCondition, Error, Event, EventStore, PostgresEventStore, Query, QueryItem, SequencedEvent,
 };
+use std::time::Duration;
+
 use futures_util::StreamExt;
 use sqlx::PgPool;
 
@@ -36,6 +38,43 @@ async fn read_all(
 fn assert_event_types(events: &[SequencedEvent], expected: &[&str]) {
     let actual: Vec<&str> = events.iter().map(|e| e.event.event_type.as_str()).collect();
     assert_eq!(actual, expected);
+}
+
+#[sqlx::test]
+async fn append_waits_for_the_store_wide_lock(pool: PgPool) {
+    let store = PostgresEventStore::new(pool.clone());
+    let mut conn = pool.acquire().await.unwrap();
+
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(event_store::APPEND_LOCK_ID)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+    let append = tokio::spawn(async move {
+        store
+            .append(vec![event("created", vec!["product:1".into()])], None)
+            .await
+    });
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !append.is_finished(),
+        "append must wait for the store-wide append lock"
+    );
+
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(event_store::APPEND_LOCK_ID)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(5), append)
+        .await
+        .expect("append did not finish after releasing the lock")
+        .expect("append task panicked");
+
+    assert!(result.is_ok(), "append failed: {result:?}");
 }
 
 #[sqlx::test]

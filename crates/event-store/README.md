@@ -82,6 +82,20 @@ PostgreSQL can abort concurrent conditional appends with SQLSTATE `40001`
 10 attempts) and only returns the error when every attempt conflicts. Row
 handlers therefore never need to retry a conflicting append themselves.
 
+## 📏 Global ordering
+
+Every append acquires a transaction-scoped PostgreSQL advisory lock before the
+insert and holds it until commit. This is required for checkpoint-based readers:
+sequence values are allocated at insert time, but transactions can commit in a
+different order. Without the lock, a projection could read position `N + 1`,
+advance its checkpoint, and then miss position `N` when that transaction commits
+late, permanently.
+
+The lock serializes appends to one event store. That is the expected tradeoff
+for a totally ordered log; run independent stores in separate databases (or use
+a different lock key in a fork). Events are inserted one at a time so each
+`RETURNING position` is unambiguously associated with its event.
+
 ---
 
 ## 🔔 Notifications

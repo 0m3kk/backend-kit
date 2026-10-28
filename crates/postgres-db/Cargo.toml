@@ -7,6 +7,7 @@ description = "PostgreSQL configuration, secrets, and connection management"
 readme = "README.md"
 
 [dependencies]
+percent-encoding = "2"
 serde = { version = "1.0", features = ["derive"] }
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",

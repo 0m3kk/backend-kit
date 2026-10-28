@@ -1,3 +1,4 @@
+use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 
 use crate::ENV_DATABASE_URL;
@@ -31,6 +32,10 @@ fn default_password() -> String {
     "password".to_string()
 }
 
+fn decode(value: &str) -> String {
+    percent_decode_str(value).decode_utf8_lossy().into_owned()
+}
+
 impl Default for PostgresSecret {
     fn default() -> Self {
         Self {
@@ -54,12 +59,15 @@ impl PostgresSecret {
     pub fn apply_database_url(&mut self, url: &str) -> Result<(), url::ParseError> {
         let parsed = url::Url::parse(url)?;
 
-        let username = parsed.username();
+        // `Url` exposes credentials in their percent-encoded form. Decode them
+        // before handing them to the driver so passwords containing `@`, `:`,
+        // `%`, or other reserved characters authenticate correctly.
+        let username = decode(parsed.username());
         if !username.is_empty() {
-            self.username = username.to_string();
+            self.username = username;
         }
         if let Some(password) = parsed.password() {
-            self.password = password.to_string();
+            self.password = decode(password);
         }
 
         Ok(())
@@ -115,6 +123,29 @@ mod tests {
 
         assert_eq!(secret.username, "catalog");
         assert_eq!(secret.password, "secret");
+        Ok(())
+    }
+
+    #[test]
+    fn decodes_percent_encoded_credentials() -> Result<(), Box<dyn std::error::Error>> {
+        let mut secret = PostgresSecret::default();
+
+        secret.apply_database_url("postgres://user%40name:p%40ss%3Aword@db.example.com/dev")?;
+
+        assert_eq!(secret.username, "user@name");
+        assert_eq!(secret.password, "p@ss:word");
+        Ok(())
+    }
+
+    #[test]
+    fn decodes_credentials_exactly_once() -> Result<(), Box<dyn std::error::Error>> {
+        let mut secret = PostgresSecret::default();
+
+        // A literal `%` is encoded as `%25`; decoding must not turn a valid
+        // password into a different one.
+        secret.apply_database_url("postgres://user:p%2540ss@db.example.com/dev")?;
+
+        assert_eq!(secret.password, "p%40ss");
         Ok(())
     }
 

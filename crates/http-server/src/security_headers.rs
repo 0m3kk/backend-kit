@@ -85,13 +85,29 @@ impl Default for SecurityHeadersConfig {
     }
 }
 
+/// Parses one configured header value and logs a warning instead of silently
+/// dropping an invalid value.
+fn parse_header(name: &str, value: &str) -> Option<HeaderValue> {
+    match HeaderValue::from_str(value) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::warn!(
+                header = name,
+                %error,
+                "invalid security header value; header disabled"
+            );
+            None
+        }
+    }
+}
+
 impl SecurityHeadersConfig {
     /// Applies the configured security headers to the router.
     pub fn apply(&self, mut router: Router) -> Router {
         if let Some(val) = self
             .content_type_options
             .as_deref()
-            .and_then(|v| HeaderValue::from_str(v).ok())
+            .and_then(|v| parse_header("x-content-type-options", v))
         {
             router = router.layer(SetResponseHeaderLayer::overriding(
                 X_CONTENT_TYPE_OPTIONS.clone(),
@@ -102,7 +118,7 @@ impl SecurityHeadersConfig {
         if let Some(val) = self
             .frame_options
             .as_deref()
-            .and_then(|v| HeaderValue::from_str(v).ok())
+            .and_then(|v| parse_header("x-frame-options", v))
         {
             router = router.layer(SetResponseHeaderLayer::overriding(
                 X_FRAME_OPTIONS.clone(),
@@ -113,7 +129,7 @@ impl SecurityHeadersConfig {
         if let Some(val) = self
             .xss_protection
             .as_deref()
-            .and_then(|v| HeaderValue::from_str(v).ok())
+            .and_then(|v| parse_header("x-xss-protection", v))
         {
             router = router.layer(SetResponseHeaderLayer::overriding(
                 X_XSS_PROTECTION.clone(),
@@ -124,7 +140,7 @@ impl SecurityHeadersConfig {
         if let Some(val) = self
             .hsts
             .as_deref()
-            .and_then(|v| HeaderValue::from_str(v).ok())
+            .and_then(|v| parse_header("strict-transport-security", v))
         {
             router = router.layer(SetResponseHeaderLayer::if_not_present(
                 STRICT_TRANSPORT_SECURITY.clone(),
@@ -135,7 +151,7 @@ impl SecurityHeadersConfig {
         if let Some(val) = self
             .content_security_policy
             .as_deref()
-            .and_then(|v| HeaderValue::from_str(v).ok())
+            .and_then(|v| parse_header("content-security-policy", v))
         {
             router = router.layer(SetResponseHeaderLayer::overriding(
                 CONTENT_SECURITY_POLICY.clone(),
@@ -146,7 +162,7 @@ impl SecurityHeadersConfig {
         if let Some(val) = self
             .referrer_policy
             .as_deref()
-            .and_then(|v| HeaderValue::from_str(v).ok())
+            .and_then(|v| parse_header("referrer-policy", v))
         {
             router = router.layer(SetResponseHeaderLayer::overriding(
                 REFERRER_POLICY.clone(),
@@ -161,6 +177,12 @@ impl SecurityHeadersConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_header_values_are_reported_as_none() {
+        assert!(parse_header("x-frame-options", "DENY").is_some());
+        assert!(parse_header("x-frame-options", "bad\nvalue").is_none());
+    }
 
     #[test]
     fn default_security_headers_config() {
