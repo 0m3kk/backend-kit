@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use event_store::{Query, SequencedEvent};
+use event_store::{Query, SequencePosition, SequencedEvent};
 use thiserror::Error;
 
 /// Boxed future returned by [`Projection`] methods.
@@ -25,15 +25,20 @@ pub enum ProjectionError {
     Store(String),
 
     /// Resetting the projection failed.
-    #[error("projection reset failed: {0}")]
+    #[error("reset failed: {0}")]
     Reset(String),
 }
 
 /// A read model that the supervisor can run without generic type parameters.
 ///
-/// Implementations translate events into rows. The default [`apply_batch`]
-/// applies events one by one; implementations may override it to use a single
-/// transaction and checkpoint per batch.
+/// The projection owns its checkpoint write. [`apply_batch`] receives the
+/// highest event position of the batch and must persist it together with the
+/// read-model writes, so a batch is exactly-once: a crash commits either both
+/// the rows and the checkpoint or neither.
+///
+/// Implementations backed by PostgreSQL should use
+/// [`save_in_transaction`](crate::save_in_transaction) inside the same
+/// transaction as the row writes.
 ///
 /// [`apply_batch`]: Projection::apply_batch
 pub trait Projection: Send + Sync {
@@ -43,28 +48,16 @@ pub trait Projection: Send + Sync {
     /// Event-store query for the events this projection consumes.
     fn query(&self) -> Query;
 
-    /// Applies one event to the projection.
-    fn apply<'a>(
-        &'a self,
-        event: &'a SequencedEvent,
-    ) -> ProjectionFuture<'a, Result<(), ProjectionError>>;
-
-    /// Applies a batch of events.
+    /// Applies a batch of events and persists `checkpoint`.
     ///
-    /// The default implementation applies events sequentially. A projection
-    /// that owns its SQL transaction can override this to make the batch
-    /// atomic.
+    /// `checkpoint` is the highest position in `events` (or the last applied
+    /// position when `events` is empty). Implementations must not advance a
+    /// checkpoint past a write that was rolled back.
     fn apply_batch<'a>(
         &'a self,
         events: &'a [SequencedEvent],
-    ) -> ProjectionFuture<'a, Result<(), ProjectionError>> {
-        Box::pin(async move {
-            for event in events {
-                self.apply(event).await?;
-            }
-            Ok(())
-        })
-    }
+        checkpoint: SequencePosition,
+    ) -> ProjectionFuture<'a, Result<(), ProjectionError>>;
 
     /// Clears the projection's rows before a rebuild.
     fn reset(&self) -> ProjectionFuture<'_, Result<(), ProjectionError>>;

@@ -199,6 +199,45 @@ impl ValueGauge {
     }
 }
 
+/// Ergonomic wrapper around an OpenTelemetry synchronous [`Gauge`](OtelGauge) that records absolute `f64` values.
+#[derive(Clone)]
+pub struct FloatGauge {
+    inner: OtelGauge<f64>,
+}
+
+impl FloatGauge {
+    /// Creates a new float gauge with the default global meter scope.
+    pub fn new(name: &'static str) -> Self {
+        let meter = global::meter("telemetry");
+        Self {
+            inner: meter.f64_gauge(name).build(),
+        }
+    }
+
+    /// Creates a new float gauge with a custom scope name.
+    pub fn with_scope(scope: &'static str, name: &'static str) -> Self {
+        let meter = global::meter(scope);
+        Self {
+            inner: meter.f64_gauge(name).build(),
+        }
+    }
+
+    /// Records an absolute value without attributes.
+    pub fn record(&self, value: f64) {
+        self.inner.record(value, &[]);
+    }
+
+    /// Records an absolute value with attributes.
+    pub fn record_with<I, T>(&self, value: f64, attributes: I)
+    where
+        I: IntoIterator<Item = T>,
+        T: IntoKeyValue,
+    {
+        let kvs = to_key_values(attributes);
+        self.inner.record(value, &kvs);
+    }
+}
+
 /// Ergonomic wrapper around an OpenTelemetry [`Histogram`](OtelHistogram).
 #[derive(Clone)]
 pub struct Histogram {
@@ -320,6 +359,13 @@ mod tests {
         gauge.dec();
         gauge.dec_with([("pool", "primary")]);
         gauge.add(10, [("pool", "primary")]);
+    }
+
+    #[test]
+    fn float_gauge_operations() {
+        let gauge = FloatGauge::new("test_float_gauge");
+        gauge.record(1.5);
+        gauge.record_with(2.5, [("view", "catalog")]);
     }
 
     #[test]

@@ -2,8 +2,9 @@
 
 use std::fmt::Display;
 use std::sync::Arc;
+use std::time::Duration;
 
-use event_store::EventStore;
+use event_store::{EventStore, SequencePosition};
 use futures_util::StreamExt;
 use thiserror::Error;
 use tokio::sync::{broadcast, watch};
@@ -12,8 +13,81 @@ use tokio::time::{self, MissedTickBehavior};
 
 use crate::checkpoint::CheckpointStore;
 use crate::health::WorkerHealth;
+use crate::metrics::{ProjectionMetrics, event_age_seconds};
 use crate::projection::{Projection, ProjectionError};
-use crate::runner::CatchupConfig;
+
+/// Default delay between catch-up runs.
+pub const DEFAULT_CATCHUP_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Default debounce window for coalescing event notifications.
+pub const DEFAULT_CATCHUP_DEBOUNCE: Duration = Duration::from_millis(50);
+
+/// Configuration for the catch-up loops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatchupConfig {
+    interval: Duration,
+    debounce: Duration,
+}
+
+impl Default for CatchupConfig {
+    fn default() -> Self {
+        Self {
+            interval: DEFAULT_CATCHUP_INTERVAL,
+            debounce: DEFAULT_CATCHUP_DEBOUNCE,
+        }
+    }
+}
+
+impl CatchupConfig {
+    /// Creates a configuration with the given polling interval.
+    ///
+    /// A zero interval falls back to [`DEFAULT_CATCHUP_INTERVAL`] because
+    /// `tokio::time::interval` panics on zero.
+    pub fn from_interval(interval: Duration) -> Self {
+        Self {
+            interval: if interval.is_zero() {
+                DEFAULT_CATCHUP_INTERVAL
+            } else {
+                interval
+            },
+            debounce: DEFAULT_CATCHUP_DEBOUNCE,
+        }
+    }
+
+    /// Creates a configuration from an environment variable holding seconds.
+    ///
+    /// Missing, invalid, and zero values fall back to the default interval.
+    pub fn from_env(env_var: &str) -> Self {
+        Self::from_interval(parse_interval(std::env::var(env_var).ok().as_deref()))
+    }
+
+    /// Sets the debounce window applied to wake signals.
+    ///
+    /// A zero debounce catches up immediately. The default is 50 ms.
+    #[must_use]
+    pub fn with_debounce(mut self, debounce: Duration) -> Self {
+        self.debounce = debounce;
+        self
+    }
+
+    /// Returns the polling interval.
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// Returns the notification debounce window.
+    pub fn debounce(&self) -> Duration {
+        self.debounce
+    }
+}
+
+fn parse_interval(value: Option<&str>) -> Duration {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_CATCHUP_INTERVAL)
+}
 
 /// Runtime configuration for [`ProjectionSupervisor`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +130,19 @@ impl WorkerConfig {
     pub fn batch_size(&self) -> usize {
         self.batch_size
     }
+}
+
+/// Result of one catch-up pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CatchupReport {
+    /// Number of events applied during this pass.
+    pub processed: u64,
+    /// Highest event position applied.
+    pub last_position: SequencePosition,
+    /// `true` when the pass drained every event matching the query.
+    pub caught_up: bool,
+    /// Age of the oldest event in this batch, in seconds.
+    pub lag_seconds: Option<f64>,
 }
 
 /// Errors produced by the projection supervisor.
@@ -104,6 +191,7 @@ pub struct ProjectionSupervisor<E, C> {
     projections: Vec<Arc<dyn Projection>>,
     config: WorkerConfig,
     health: WorkerHealth,
+    metrics: ProjectionMetrics,
 }
 
 impl<E, C> ProjectionSupervisor<E, C> {
@@ -120,12 +208,27 @@ impl<E, C> ProjectionSupervisor<E, C> {
                 .map(|projection| projection.name().to_string()),
         );
 
+        Self::with_health(event_store, checkpoints, projections, config, health)
+    }
+
+    /// Creates a supervisor that reports into an existing health snapshot.
+    ///
+    /// Use this when the probe server must be available before the worker
+    /// becomes leader and starts the supervisor.
+    pub fn with_health(
+        event_store: E,
+        checkpoints: C,
+        projections: Vec<Arc<dyn Projection>>,
+        config: WorkerConfig,
+        health: WorkerHealth,
+    ) -> Self {
         Self {
             event_store,
             checkpoints,
             projections,
             config,
             health,
+            metrics: ProjectionMetrics::new(),
         }
     }
 
@@ -168,6 +271,35 @@ where
 
 impl<E, C> ProjectionSupervisor<E, C>
 where
+    E: EventStore + Send + Sync,
+    E::Error: Display,
+    C: CheckpointStore + Send + Sync,
+    C::Error: Display,
+{
+    /// Runs one catch-up pass for `name`.
+    ///
+    /// The supervisor keeps calling this until a pass reports
+    /// [`CatchupReport::caught_up`]. This method does not update health or
+    /// metrics; use it for tests and one-shot drains.
+    pub async fn catchup_once(&self, name: &str) -> Result<CatchupReport, SupervisorError> {
+        let projection = self
+            .projections
+            .iter()
+            .find(|projection| projection.name() == name)
+            .ok_or_else(|| SupervisorError::UnknownProjection(name.to_string()))?;
+
+        catchup_pass(
+            &self.event_store,
+            &self.checkpoints,
+            projection.as_ref(),
+            self.config.batch_size(),
+        )
+        .await
+    }
+}
+
+impl<E, C> ProjectionSupervisor<E, C>
+where
     E: EventStore + Clone + Send + Sync + 'static,
     E::Error: Display,
     C: CheckpointStore + Clone + Send + Sync + 'static,
@@ -189,11 +321,14 @@ where
             projections,
             config,
             health,
+            metrics,
         } = self;
 
         if projections.is_empty() {
             let mut shutdown = shutdown;
-            let _ = shutdown.changed().await;
+            if !*shutdown.borrow() {
+                let _ = shutdown.changed().await;
+            }
             return Ok(());
         }
 
@@ -203,18 +338,22 @@ where
             let event_store = event_store.clone();
             let checkpoints = checkpoints.clone();
             let health = health.clone();
+            let metrics = metrics.clone();
             let projection_wake = wake.resubscribe();
             let projection_shutdown = shutdown.clone();
 
             tasks.spawn(async move {
                 run_projection_loop(
-                    event_store,
-                    checkpoints,
-                    projection,
-                    config,
+                    LoopState {
+                        event_store,
+                        checkpoints,
+                        projection,
+                        config,
+                        health,
+                        metrics,
+                    },
                     projection_wake,
                     projection_shutdown,
-                    health,
                 )
                 .await;
             });
@@ -230,65 +369,77 @@ where
     }
 }
 
-async fn run_projection_loop<E, C>(
+struct LoopState<E, C> {
     event_store: E,
     checkpoints: C,
     projection: Arc<dyn Projection>,
     config: WorkerConfig,
-    mut wake: broadcast::Receiver<()>,
-    mut shutdown: watch::Receiver<bool>,
     health: WorkerHealth,
+    metrics: ProjectionMetrics,
+}
+
+async fn run_projection_loop<E, C>(
+    state: LoopState<E, C>,
+    wake: broadcast::Receiver<()>,
+    mut shutdown: watch::Receiver<bool>,
 ) where
     E: EventStore + Send + Sync,
     E::Error: Display,
     C: CheckpointStore + Send + Sync,
     C::Error: Display,
 {
-    let name = projection.name();
-    let mut ticker = time::interval(config.catchup.interval());
+    let name = state.projection.name();
+    let mut wake = Some(wake);
+    let mut ticker = time::interval(state.config.catchup.interval());
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     tracing::info!(
         view = name,
-        interval = ?config.catchup.interval(),
-        batch_size = config.batch_size(),
+        interval = ?state.config.catchup.interval(),
+        batch_size = state.config.batch_size(),
         "projection supervisor loop started"
     );
 
-    loop {
+    'shutdown: loop {
         tokio::select! {
-            _ = ticker.tick() => {
-                catchup_and_record(
-                    &event_store,
-                    &checkpoints,
-                    projection.as_ref(),
-                    config.batch_size(),
-                    &health,
-                ).await;
-            }
-            wake_result = wake.recv() => {
+            _ = ticker.tick() => {}
+            wake_result = async {
+                match &mut wake {
+                    Some(receiver) => receiver.recv().await,
+                    None => std::future::pending::<Result<(), broadcast::error::RecvError>>().await,
+                }
+            } => {
                 match wake_result {
                     Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
-                        if !config.catchup.debounce().is_zero() {
-                            time::sleep(config.catchup.debounce()).await;
+                        if !state.config.catchup.debounce().is_zero() {
+                            time::sleep(state.config.catchup.debounce()).await;
                         }
-                        catchup_and_record(
-                            &event_store,
-                            &checkpoints,
-                            projection.as_ref(),
-                            config.batch_size(),
-                            &health,
-                        ).await;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        // Keep the polling ticker alive; notifications are only hints.
+                        // Keep polling; notifications are only hints.
+                        wake = None;
                     }
                 }
             }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
-                    break;
+                    break 'shutdown;
                 }
+                continue 'shutdown;
+            }
+        }
+
+        // Drain full batches before going back to sleep. Shutdown is checked
+        // between batches, so an in-flight batch can commit its view writes and
+        // checkpoint together instead of being cancelled half-way.
+        loop {
+            if *shutdown.borrow() {
+                break 'shutdown;
+            }
+
+            match state.catchup_and_record().await {
+                Some(report) if !report.caught_up => {}
+                _ => break,
             }
         }
     }
@@ -296,46 +447,80 @@ async fn run_projection_loop<E, C>(
     tracing::info!(view = name, "projection supervisor loop stopped");
 }
 
-async fn catchup_and_record<E, C>(
-    event_store: &E,
-    checkpoints: &C,
-    projection: &dyn Projection,
-    batch_size: usize,
-    health: &WorkerHealth,
-) where
-    E: EventStore + Send + Sync,
-    E::Error: Display,
-    C: CheckpointStore + Send + Sync,
-    C::Error: Display,
-{
-    if let Err(error) = catchup_once(event_store, checkpoints, projection, batch_size, health).await
-    {
-        health
-            .record_error(projection.name(), &error.to_string())
-            .await;
-        tracing::error!(
-            view = projection.name(),
-            %error,
-            "projection catch-up failed"
-        );
-    }
-}
-
-async fn catchup_once<E, C>(
-    event_store: &E,
-    checkpoints: &C,
-    projection: &dyn Projection,
-    batch_size: usize,
-    health: &WorkerHealth,
-) -> Result<(), SupervisorError>
+impl<E, C> LoopState<E, C>
 where
     E: EventStore + Send + Sync,
     E::Error: Display,
     C: CheckpointStore + Send + Sync,
     C::Error: Display,
 {
+    async fn catchup_and_record(&self) -> Option<CatchupReport> {
+        match catchup_pass(
+            &self.event_store,
+            &self.checkpoints,
+            self.projection.as_ref(),
+            self.config.batch_size(),
+        )
+        .await
+        {
+            Ok(report) => {
+                self.health
+                    .record_success(
+                        self.projection.name(),
+                        report.last_position,
+                        report.processed,
+                        report.lag_seconds,
+                    )
+                    .await;
+                self.metrics.record_success(
+                    self.projection.name(),
+                    report.last_position,
+                    report.processed,
+                    report.lag_seconds,
+                );
+
+                if report.processed > 0 {
+                    tracing::info!(
+                        view = self.projection.name(),
+                        processed = report.processed,
+                        last_position = report.last_position,
+                        "projection caught up"
+                    );
+                }
+
+                Some(report)
+            }
+            Err(error) => {
+                self.health
+                    .record_error(self.projection.name(), &error.to_string())
+                    .await;
+                self.metrics.record_error(self.projection.name());
+                tracing::error!(
+                    view = self.projection.name(),
+                    %error,
+                    "projection catch-up failed"
+                );
+                None
+            }
+        }
+    }
+}
+
+async fn catchup_pass<E, C>(
+    event_store: &E,
+    checkpoints: &C,
+    projection: &dyn Projection,
+    batch_size: usize,
+) -> Result<CatchupReport, SupervisorError>
+where
+    E: EventStore + Send + Sync,
+    E::Error: Display,
+    C: CheckpointStore + Send + Sync,
+    C::Error: Display,
+{
+    let name = projection.name();
     let last_position = checkpoints
-        .load(projection.name())
+        .load(name)
         .await
         .map_err(|error| SupervisorError::Checkpoint(error.to_string()))?;
     let from = last_position.map(|position| position.saturating_add(1));
@@ -359,57 +544,78 @@ where
         }
     }
 
+    let caught_up = events.len() < batch_size;
+
     if events.is_empty() {
-        health.record_success(projection.name(), highest, 0).await;
-        return Ok(());
+        return Ok(CatchupReport {
+            processed: 0,
+            last_position: highest,
+            caught_up: true,
+            lag_seconds: None,
+        });
     }
 
+    // The first event is the oldest unprocessed event, so its age is the
+    // current projection lag.
+    let lag_seconds = event_age_seconds(&events[0]);
     let processed = events.len() as u64;
+
     projection
-        .apply_batch(&events)
+        .apply_batch(&events, highest)
         .await
         .map_err(|source| SupervisorError::Projection {
-            projection: projection.name().to_string(),
+            projection: name.to_string(),
             source,
         })?;
 
-    checkpoints
-        .save(projection.name(), highest)
-        .await
-        .map_err(|error| SupervisorError::Checkpoint(error.to_string()))?;
-
-    health
-        .record_success(projection.name(), highest, processed)
-        .await;
-
-    tracing::info!(
-        view = projection.name(),
+    Ok(CatchupReport {
         processed,
-        last_position = highest,
-        "projection caught up"
-    );
-
-    Ok(())
+        last_position: highest,
+        caught_up,
+        lag_seconds,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use event_store::{
-        AppendCondition, Error, Event, EventStore, EventStream, Query, SequencePosition,
-        SequencedEvent,
+        AppendCondition, Error, Event, EventStore, EventStream, Query, SequencedEvent,
     };
     use futures_util::stream;
-    use tokio::sync::watch;
+    use tokio::sync::Notify;
 
     use super::*;
     use crate::projection::ProjectionFuture;
 
+    fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        match mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn sequenced(position: SequencePosition) -> SequencedEvent {
+        SequencedEvent {
+            event: Event::new("test.event", serde_json::Value::Null, vec![]),
+            position,
+        }
+    }
+
     #[derive(Clone, Default)]
     struct TestEventStore {
         events: Arc<Vec<SequencedEvent>>,
+    }
+
+    impl TestEventStore {
+        fn with_events(events: Vec<SequencedEvent>) -> Self {
+            Self {
+                events: Arc::new(events),
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -441,47 +647,24 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct FakeProjection {
-        applied: AtomicU64,
-        reset: AtomicU64,
-    }
-
-    impl Projection for FakeProjection {
-        fn name(&self) -> &'static str {
-            "test.view"
-        }
-
-        fn query(&self) -> Query {
-            Query::all()
-        }
-
-        fn apply<'a>(
-            &'a self,
-            _event: &'a SequencedEvent,
-        ) -> ProjectionFuture<'a, Result<(), ProjectionError>> {
-            self.applied.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Ok(()) })
-        }
-
-        fn reset(&self) -> ProjectionFuture<'_, Result<(), ProjectionError>> {
-            self.reset.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Ok(()) })
-        }
-    }
-
     #[derive(Clone, Default)]
     struct FakeCheckpointStore {
         position: Arc<AtomicU64>,
         resets: Arc<AtomicU64>,
     }
 
+    impl FakeCheckpointStore {
+        fn position(&self) -> Option<SequencePosition> {
+            let position = self.position.load(Ordering::SeqCst);
+            (position > 0).then_some(position)
+        }
+    }
+
     impl CheckpointStore for FakeCheckpointStore {
         type Error = std::io::Error;
 
         async fn load(&self, _view: &str) -> Result<Option<SequencePosition>, Self::Error> {
-            let position = self.position.load(Ordering::SeqCst);
-            Ok((position > 0).then_some(position))
+            Ok(self.position())
         }
 
         async fn save(&self, _view: &str, position: SequencePosition) -> Result<(), Self::Error> {
@@ -496,60 +679,247 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn supervisor_applies_events_and_resets_checkpoints()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let event_store = TestEventStore {
-            events: Arc::new(vec![SequencedEvent {
-                event: Event::new("test.event", serde_json::Value::Null, vec![]),
-                position: 1,
-            }]),
-        };
+    #[derive(Clone)]
+    struct FakeProjection {
+        checkpoints: FakeCheckpointStore,
+        poison: Arc<Mutex<BTreeSet<SequencePosition>>>,
+        committed: Arc<Mutex<Vec<SequencePosition>>>,
+        batches: Arc<AtomicU64>,
+        resets: Arc<AtomicU64>,
+        release: Option<Arc<Notify>>,
+    }
 
-        let projection = Arc::new(FakeProjection::default());
-        let checkpoints = FakeCheckpointStore::default();
-        let supervisor = ProjectionSupervisor::new(
-            event_store,
+    impl FakeProjection {
+        fn new(checkpoints: FakeCheckpointStore) -> Self {
+            Self {
+                checkpoints,
+                poison: Arc::default(),
+                committed: Arc::default(),
+                batches: Arc::default(),
+                resets: Arc::default(),
+                release: None,
+            }
+        }
+
+        fn blocking(checkpoints: FakeCheckpointStore) -> (Self, Arc<Notify>) {
+            let release = Arc::new(Notify::new());
+            (
+                Self {
+                    release: Some(release.clone()),
+                    ..Self::new(checkpoints)
+                },
+                release,
+            )
+        }
+
+        fn committed(&self) -> Vec<SequencePosition> {
+            lock(&self.committed).clone()
+        }
+
+        fn batches(&self) -> u64 {
+            self.batches.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Projection for FakeProjection {
+        fn name(&self) -> &'static str {
+            "test.view"
+        }
+
+        fn query(&self) -> Query {
+            Query::all()
+        }
+
+        fn apply_batch<'a>(
+            &'a self,
+            events: &'a [SequencedEvent],
+            checkpoint: SequencePosition,
+        ) -> ProjectionFuture<'a, Result<(), ProjectionError>> {
+            Box::pin(async move {
+                self.batches.fetch_add(1, Ordering::SeqCst);
+
+                if let Some(release) = &self.release {
+                    release.notified().await;
+                }
+
+                let poisoned = events
+                    .iter()
+                    .any(|event| lock(&self.poison).contains(&event.position));
+                if poisoned {
+                    return Err(ProjectionError::UnexpectedEvent("poison".to_string()));
+                }
+
+                lock(&self.committed).extend(events.iter().map(|event| event.position));
+                self.checkpoints
+                    .save(self.name(), checkpoint)
+                    .await
+                    .map_err(|error| ProjectionError::Store(error.to_string()))?;
+                Ok(())
+            })
+        }
+
+        fn reset(&self) -> ProjectionFuture<'_, Result<(), ProjectionError>> {
+            self.resets.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn supervisor(
+        events: Vec<SequencedEvent>,
+        projection: &FakeProjection,
+        checkpoints: &FakeCheckpointStore,
+        batch_size: usize,
+    ) -> ProjectionSupervisor<TestEventStore, FakeCheckpointStore> {
+        ProjectionSupervisor::new(
+            TestEventStore::with_events(events),
             checkpoints.clone(),
-            vec![projection.clone()],
-            WorkerConfig::new(CatchupConfig::from_interval(
-                std::time::Duration::from_secs(60),
-            )),
+            vec![Arc::new(projection.clone())],
+            WorkerConfig::default().with_batch_size(batch_size),
+        )
+    }
+
+    #[tokio::test]
+    async fn applies_events_and_advances_the_checkpoint() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let checkpoints = FakeCheckpointStore::default();
+        let projection = FakeProjection::new(checkpoints.clone());
+        let supervisor = supervisor(
+            vec![sequenced(1), sequenced(2), sequenced(3)],
+            &projection,
+            &checkpoints,
+            10,
+        );
+
+        let report = supervisor.catchup_once("test.view").await?;
+
+        assert_eq!(report.processed, 3);
+        assert_eq!(report.last_position, 3);
+        assert!(report.caught_up);
+        assert_eq!(checkpoints.position(), Some(3));
+        assert_eq!(projection.committed(), vec![1, 2, 3]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_batch_keeps_the_checkpoint_and_is_retried()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let checkpoints = FakeCheckpointStore::default();
+        let projection = FakeProjection::new(checkpoints.clone());
+        lock(&projection.poison).insert(2);
+        let supervisor = supervisor(
+            vec![sequenced(1), sequenced(2), sequenced(3)],
+            &projection,
+            &checkpoints,
+            10,
+        );
+
+        assert!(supervisor.catchup_once("test.view").await.is_err());
+        assert_eq!(checkpoints.position(), None);
+        assert!(projection.committed().is_empty());
+
+        // A poison event is retried with the whole batch.
+        assert!(supervisor.catchup_once("test.view").await.is_err());
+        assert_eq!(projection.batches(), 2);
+        assert_eq!(checkpoints.position(), None);
+
+        lock(&projection.poison).clear();
+        let report = supervisor.catchup_once("test.view").await?;
+
+        assert_eq!(report.processed, 3);
+        assert_eq!(checkpoints.position(), Some(3));
+        assert_eq!(projection.committed(), vec![1, 2, 3]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lost_notification_is_covered_by_polling() -> Result<(), Box<dyn std::error::Error>> {
+        let checkpoints = FakeCheckpointStore::default();
+        let projection = FakeProjection::new(checkpoints.clone());
+        let supervisor = ProjectionSupervisor::new(
+            TestEventStore::with_events(vec![sequenced(1), sequenced(2), sequenced(3)]),
+            checkpoints.clone(),
+            vec![Arc::new(projection.clone())],
+            WorkerConfig::new(CatchupConfig::from_interval(Duration::from_millis(20))),
         );
 
         let (wake_tx, wake_rx) = broadcast::channel(1);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let task = tokio::spawn(supervisor.run(wake_rx, shutdown_rx));
 
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            while projection.applied.load(Ordering::SeqCst) == 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while checkpoints.position() != Some(3) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
         })
         .await?;
 
-        let _ = wake_tx.send(());
+        // Closing the hint channel must not stop the polling ticker.
+        drop(wake_tx);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
         let _ = shutdown_tx.send(true);
-        tokio::time::timeout(std::time::Duration::from_secs(1), task).await???;
-        assert_eq!(checkpoints.resets.load(Ordering::SeqCst), 0);
+        tokio::time::timeout(Duration::from_secs(1), task).await???;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shutdown_finishes_the_in_flight_batch_and_stops()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let checkpoints = FakeCheckpointStore::default();
+        let (projection, release) = FakeProjection::blocking(checkpoints.clone());
+        let supervisor = ProjectionSupervisor::new(
+            TestEventStore::with_events(vec![sequenced(1), sequenced(2)]),
+            checkpoints.clone(),
+            vec![Arc::new(projection.clone())],
+            WorkerConfig::new(CatchupConfig::from_interval(Duration::from_secs(60)))
+                .with_batch_size(1),
+        );
+
+        let (wake_tx, wake_rx) = broadcast::channel(1);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task = tokio::spawn(supervisor.run(wake_rx, shutdown_rx));
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while projection.batches() == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+
+        let _ = shutdown_tx.send(true);
+        release.notify_one();
+
+        tokio::time::timeout(Duration::from_secs(1), task).await???;
+
+        // The in-flight batch committed, but no new batch started.
+        assert_eq!(projection.batches(), 1);
+        assert_eq!(projection.committed(), vec![1]);
+        assert_eq!(checkpoints.position(), Some(1));
+        drop(wake_tx);
         Ok(())
     }
 
     #[tokio::test]
     async fn rebuild_resets_projection_and_checkpoint() -> Result<(), Box<dyn std::error::Error>> {
-        let event_store = TestEventStore::default();
-        let projection = Arc::new(FakeProjection::default());
         let checkpoints = FakeCheckpointStore::default();
-        let supervisor = ProjectionSupervisor::new(
-            event_store,
-            checkpoints.clone(),
-            vec![projection.clone()],
-            WorkerConfig::default(),
-        );
+        let projection = FakeProjection::new(checkpoints.clone());
+        let supervisor = supervisor(Vec::new(), &projection, &checkpoints, 10);
 
         supervisor.rebuild("test.view").await?;
-        assert_eq!(projection.reset.load(Ordering::SeqCst), 1);
+        assert_eq!(projection.resets.load(Ordering::SeqCst), 1);
         assert_eq!(checkpoints.resets.load(Ordering::SeqCst), 1);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn rebuild_rejects_unknown_projection() {
+        let checkpoints = FakeCheckpointStore::default();
+        let projection = FakeProjection::new(checkpoints.clone());
+        let supervisor = supervisor(Vec::new(), &projection, &checkpoints, 10);
+
+        assert!(matches!(
+            supervisor.rebuild("unknown.view").await,
+            Err(SupervisorError::UnknownProjection(_))
+        ));
     }
 }

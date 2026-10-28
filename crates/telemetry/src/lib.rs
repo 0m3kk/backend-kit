@@ -9,7 +9,7 @@ pub mod tracer;
 
 pub use config::TelemetryConfig;
 pub use metrics::{
-    Counter, Gauge, Histogram, HistogramTimer, IntoKeyValue, ValueGauge, to_key_values,
+    Counter, FloatGauge, Gauge, Histogram, HistogramTimer, IntoKeyValue, ValueGauge, to_key_values,
 };
 pub use propagation::{extract_context, init_propagator, inject_context};
 pub use secret::TelemetrySecret;

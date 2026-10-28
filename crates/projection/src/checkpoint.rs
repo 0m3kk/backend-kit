@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use event_store::SequencePosition;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use thiserror::Error;
 
 /// Embedded database migrations for projection checkpoints.
@@ -86,6 +86,37 @@ impl PostgresCheckpointStore {
     }
 }
 
+/// Saves a checkpoint on an existing PostgreSQL connection or transaction.
+///
+/// Projections that apply a batch and save the checkpoint atomically call this
+/// with the same transaction used for their view writes.
+pub async fn save_in_transaction(
+    conn: &mut PgConnection,
+    view: &str,
+    position: SequencePosition,
+) -> Result<(), CheckpointError> {
+    let position = i64::try_from(position).map_err(|_| CheckpointError::PositionOverflow)?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO projection_checkpoints (view_name, last_event_position, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (view_name) DO UPDATE SET
+            last_event_position = GREATEST(
+                projection_checkpoints.last_event_position,
+                EXCLUDED.last_event_position
+            ),
+            updated_at = NOW()
+        "#,
+    )
+    .bind(view)
+    .bind(position)
+    .execute(conn)
+    .await?;
+
+    Ok(())
+}
+
 impl CheckpointStore for PostgresCheckpointStore {
     type Error = CheckpointError;
 
@@ -106,26 +137,8 @@ impl CheckpointStore for PostgresCheckpointStore {
     }
 
     async fn save(&self, view: &str, position: SequencePosition) -> Result<(), Self::Error> {
-        let position = i64::try_from(position).map_err(|_| CheckpointError::PositionOverflow)?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO projection_checkpoints (view_name, last_event_position, updated_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (view_name) DO UPDATE SET
-                last_event_position = GREATEST(
-                    projection_checkpoints.last_event_position,
-                    EXCLUDED.last_event_position
-                ),
-                updated_at = NOW()
-            "#,
-        )
-        .bind(view)
-        .bind(position)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        let mut conn = self.pool.acquire().await?;
+        save_in_transaction(&mut conn, view, position).await
     }
 
     async fn reset(&self, view: &str) -> Result<(), Self::Error> {

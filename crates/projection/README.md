@@ -1,6 +1,8 @@
 # projection
 
-Reusable projection primitives for event-sourced services.
+Reusable projection primitives for event-sourced services: a multi-view
+supervisor, an exactly-once batch contract, PostgreSQL checkpoints, health, and
+leader election.
 
 ## Migrations
 
@@ -14,93 +16,56 @@ store, call `PostgresCheckpointStore::migrate(&pool)` or
 not interfere with an application's own migrations in `_sqlx_migrations`.
 `PROJECTION_MIGRATOR` is available for tests that use `#[sqlx::test]`.
 
-## View contract
+## Projection contract
 
-Implement [`View`](src/view.rs) for each persisted read model. A view declares:
+Implement [`Projection`](src/projection.rs) for each read model. A projection
+declares:
 
 - a stable `name` used as its checkpoint key;
 - the event-store `query` it consumes;
-- an `apply` method that maps one `SequencedEvent` onto its table.
+- `apply_batch`, which writes the rows and the checkpoint;
+- `reset`, which clears the view for a rebuild.
 
-## Catch-up worker
-
-`ProjectionWorker` reads the checkpoint, streams matching events, applies them,
-and advances the checkpoint every 100 events and at the end of a run. Crash
-recovery stays safe when the view also guards writes by event position.
-
-## Catch-up loop
-
-`run_catchup_loop` drives a worker until a shutdown future completes. The first
-run happens immediately, then once per configured interval. Errors are logged
-and the loop keeps going, so a transient database failure does not stop the
-worker.
+`apply_batch` receives the highest event position of the batch. It must persist
+the rows and the checkpoint in the same transaction, so a batch is
+exactly-once: a crash commits either both or neither. PostgreSQL implementations
+use `save_in_transaction`:
 
 ```rust
-use std::time::Duration;
+use projection::{ProjectionError, ProjectionFuture, save_in_transaction};
 
-use projection::{CatchupConfig, run_catchup_loop};
+impl Projection for PostgresProductListView {
+    fn apply_batch<'a>(
+        &'a self,
+        events: &'a [SequencedEvent],
+        checkpoint: SequencePosition,
+    ) -> ProjectionFuture<'a, Result<(), ProjectionError>> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(store_error)?;
+            for event in events {
+                apply_event(&mut tx, event).await.map_err(store_error)?;
+            }
+            save_in_transaction(&mut tx, self.name(), checkpoint)
+                .await
+                .map_err(store_error)?;
+            tx.commit().await.map_err(store_error)?;
+            Ok(())
+        })
+    }
 
-let config = CatchupConfig::from_env("PROJECTION_WORKER_INTERVAL_SECONDS");
-let shutdown = async {
-    let _ = tokio::signal::ctrl_c().await;
-};
-
-run_catchup_loop(&worker, &view, config, shutdown).await;
+    // name(), query(), reset() ...
+}
 ```
 
-`CatchupConfig::from_env` reads whole seconds. Missing, invalid, and zero values
-fall back to `DEFAULT_CATCHUP_INTERVAL` (5 seconds).
-
-## Wake-ups and notifications
-
-`run_catchup_loop_with_wake` adds an immediate wake-up source to the loop. The
-`event-store` crate installs an `AFTER INSERT` trigger that emits
-`NOTIFY events_appended`, and `spawn_listener` turns those notifications into
-wake signals:
-
-```rust
-use tokio::sync::{broadcast, watch};
-
-use projection::{CatchupConfig, spawn_listener, run_catchup_loop_with_wake};
-
-let (wake_tx, _) = broadcast::channel(1);
-let listener = spawn_listener(
-    pool.clone(),
-    event_store::EVENTS_NOTIFY_CHANNEL,
-    wake_tx.clone(),
-    shutdown_rx.clone(),
-);
-
-let config = CatchupConfig::from_env("PROJECTION_WORKER_INTERVAL_SECONDS")
-    .with_debounce(Duration::from_millis(50));
-
-run_catchup_loop_with_wake(
-    &worker,
-    &view,
-    config,
-    wake_tx.subscribe(),
-    shutdown,
-)
-.await;
-
-let _ = listener.await;
-```
-
-- Notifications are coalesced by the debounce window (default 50 ms).
-- The polling ticker remains active as the safety net.
-- The listener reconnects with exponential backoff and emits a wake signal after
-  reconnecting, because notifications sent while disconnected are lost.
-- The listener holds one connection from the pool.
-- The worker also holds one connection for the leader lock and uses the pool
-  for event reads and checkpoints. Size the pool for at least three concurrent
-  connections.
+Row handlers must stay idempotent as well: guard writes with
+`last_event_position < EXCLUDED.last_event_position` so replay after a crash
+cannot regress a row.
 
 ## Multi-view supervisor
 
-`ProjectionSupervisor` runs one catch-up loop per `Projection` and is the
-recommended entry point for a worker binary. The starter supplies a
-`Vec<Arc<dyn Projection>>` registry; the supervisor owns the shared wake channel,
-per-view checkpoints, health state, and shutdown behavior.
+`ProjectionSupervisor` runs one catch-up loop per `Projection`. It owns the
+wake channel fan-out, per-view checkpoints, health state, and shutdown
+behavior.
 
 ```rust
 use std::sync::Arc;
@@ -119,17 +84,72 @@ let health = supervisor.health();
 supervisor.run(wake_rx, shutdown_rx).await?;
 ```
 
-Each view implements `Projection`:
+Each loop:
 
-- `name()` is the stable checkpoint key;
-- `query()` selects the consumed event types;
-- `apply` / `apply_batch` writes idempotently;
-- `reset()` clears the view table for a rebuild.
+- polls on the configured interval (default 5 seconds);
+- drains full batches back-to-back, so a large backlog is not limited to one
+  batch per tick;
+- checks shutdown between batches, so an in-flight batch always commits
+  atomically instead of being cancelled half-way;
+- treats notifications as hints; a lost or closed notification channel leaves
+  the polling ticker as the safety net.
 
+`ProjectionSupervisor::catchup_once(name)` runs a single pass for tests and
+one-shot drains. `rebuild(name)` resets both the view and its checkpoint.
 `WorkerHealth::snapshot()` reports the last applied position, processed count,
-and last error per view. `shutdown_signal()` handles `SIGTERM` and `SIGINT`.
-`ProjectionSupervisor::rebuild(name)` resets both the view and its checkpoint,
-so the next run replays from the beginning.
+lag, and consecutive errors per view.
+
+## Metrics
+
+The supervisor emits OpenTelemetry metrics through the `telemetry` crate:
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `projection_processed_total` | counter | `view` | Events applied by this process |
+| `projection_errors_total` | counter | `view` | Failed catch-up attempts |
+| `projection_last_position` | gauge | `view` | Highest applied event position |
+| `projection_lag_seconds` | gauge | `view` | Age of the oldest event in the last applied batch; 0 when caught up |
+
+Lag uses the event metadata timestamp, so events written with
+`ExecutionContext::create_store_event` report lag out of the box. Events
+without typed metadata record zero.
+
+## Health and readiness
+
+`WorkerHealth::is_healthy()` is false after any failed attempt.
+`WorkerHealth::is_ready()` tolerates transient errors and turns false after
+`UNHEALTHY_AFTER_ERRORS` (3) consecutive failures for a view. Expose it from a
+`/readyz` endpoint and keep `/healthz` as a liveness probe.
+
+## Wake-ups and notifications
+
+The `event-store` crate installs an `AFTER INSERT` trigger that emits
+`NOTIFY events_appended`, and `spawn_listener` turns those notifications into
+wake signals:
+
+```rust
+use tokio::sync::{broadcast, watch};
+
+use projection::spawn_listener;
+
+let (wake_tx, _) = broadcast::channel(1);
+let listener = spawn_listener(
+    pool.clone(),
+    event_store::EVENTS_NOTIFY_CHANNEL,
+    wake_tx.clone(),
+    shutdown_rx.clone(),
+);
+
+supervisor.run(wake_tx.subscribe(), shutdown_rx.clone()).await?;
+
+let _ = listener.await;
+```
+
+- Notifications are coalesced by the debounce window (default 50 ms).
+- The polling ticker remains active as the safety net.
+- The listener reconnects with exponential backoff and emits a wake signal after
+  reconnecting, because notifications sent while disconnected are lost.
+- The listener holds one connection from the pool.
 
 ## Leader election
 
@@ -140,7 +160,7 @@ use projection::LeaderGuard;
 
 let guard = LeaderGuard::acquire(&pool, lock_id, retry_interval, &mut shutdown_rx).await?;
 if guard.is_none() && lock_id > 0 {
-    return Ok(()); // another worker is active
+    return Ok(()); // shutdown while standing by
 }
 
 // ... run the worker loops ...
@@ -152,6 +172,6 @@ if let Some(guard) = guard {
 
 A non-positive `lock_id` disables leader election. The guard keeps a dedicated
 connection alive because the lock is session-level. If that connection is lost,
-PostgreSQL releases the lock and a standby can take over; treat the lock
-connection as part of the worker's health and restart the worker if the database
-connection is unstable.
+PostgreSQL releases the lock and a standby can take over; size the pool for at
+least three concurrent connections (leader lock, notification listener, and
+catch-up reads and writes).
