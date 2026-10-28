@@ -39,6 +39,9 @@ pub trait CheckpointStore: Send + Sync {
         view: &str,
         position: SequencePosition,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// Removes the checkpoint so the projection replays from the beginning.
+    fn reset(&self, view: &str) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// Errors produced by the PostgreSQL checkpoint store.
@@ -121,6 +124,15 @@ impl CheckpointStore for PostgresCheckpointStore {
         .bind(position)
         .execute(&self.pool)
         .await?;
+
+        Ok(())
+    }
+
+    async fn reset(&self, view: &str) -> Result<(), Self::Error> {
+        sqlx::query("DELETE FROM projection_checkpoints WHERE view_name = $1")
+            .bind(view)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }

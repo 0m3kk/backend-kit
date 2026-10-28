@@ -95,6 +95,42 @@ let _ = listener.await;
   for event reads and checkpoints. Size the pool for at least three concurrent
   connections.
 
+## Multi-view supervisor
+
+`ProjectionSupervisor` runs one catch-up loop per `Projection` and is the
+recommended entry point for a worker binary. The starter supplies a
+`Vec<Arc<dyn Projection>>` registry; the supervisor owns the shared wake channel,
+per-view checkpoints, health state, and shutdown behavior.
+
+```rust
+use std::sync::Arc;
+
+use projection::{CatchupConfig, ProjectionSupervisor, WorkerConfig};
+
+let views: Vec<Arc<dyn Projection>> = vec![Arc::new(product_list_view)];
+let supervisor = ProjectionSupervisor::new(
+    event_store,
+    checkpoints,
+    views,
+    WorkerConfig::new(CatchupConfig::from_env("PROJECTION_WORKER_INTERVAL_SECONDS")),
+);
+
+let health = supervisor.health();
+supervisor.run(wake_rx, shutdown_rx).await?;
+```
+
+Each view implements `Projection`:
+
+- `name()` is the stable checkpoint key;
+- `query()` selects the consumed event types;
+- `apply` / `apply_batch` writes idempotently;
+- `reset()` clears the view table for a rebuild.
+
+`WorkerHealth::snapshot()` reports the last applied position, processed count,
+and last error per view. `shutdown_signal()` handles `SIGTERM` and `SIGINT`.
+`ProjectionSupervisor::rebuild(name)` resets both the view and its checkpoint,
+so the next run replays from the beginning.
+
 ## Leader election
 
 `LeaderGuard` wraps `pg_try_advisory_lock` for active-passive workers:

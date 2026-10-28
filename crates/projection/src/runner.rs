@@ -265,6 +265,11 @@ mod tests {
             self.position.store(position, Ordering::SeqCst);
             Ok(())
         }
+
+        async fn reset(&self, _view: &str) -> Result<(), Self::Error> {
+            self.position.store(0, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     #[test]

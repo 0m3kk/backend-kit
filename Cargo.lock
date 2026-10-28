@@ -2719,6 +2719,7 @@ dependencies = [
 name = "projection"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "event-store",
  "futures-util",
  "serde_json",
