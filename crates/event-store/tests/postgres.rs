@@ -129,6 +129,35 @@ async fn read_starts_from_sequence_position(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn concurrent_conditional_appends_serialize_and_retry(pool: PgPool) {
+    let store = PostgresEventStore::new(pool);
+    let mut handles = Vec::new();
+
+    for i in 0..8 {
+        let store = store.clone();
+        handles.push(tokio::spawn(async move {
+            let tag = format!("product:{i}");
+            store
+                .append(
+                    vec![event("created", vec![tag.clone()])],
+                    Some(AppendCondition::new(
+                        Query::from_items([item(&["created"], vec![tag])]),
+                        None,
+                    )),
+                )
+                .await
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap().unwrap();
+    }
+
+    let events = read_all(&store, Query::all(), None).await;
+    assert_eq!(events.len(), 8);
+}
+
+#[sqlx::test]
 async fn query_items_are_combined_with_or(pool: PgPool) {
     let store = PostgresEventStore::new(pool);
     store

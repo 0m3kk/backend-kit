@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Histogram};
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgConnection, PgPool, Postgres};
-use sqlx::{QueryBuilder, Row, Transaction};
+use sqlx::{QueryBuilder, Row};
 
 use crate::error::{AppendConditionError, Error};
 use crate::event::{Event, SequencePosition, SequencedEvent};
@@ -181,23 +182,24 @@ impl EventStore for PostgresEventStore {
                 current_condition.clone()
             };
 
-            let mut tx = if try_condition.is_some() {
-                self.pool
-                    .begin_with("BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-                    .await
-                    .map_err(Error::Store)?
-            } else {
-                self.pool.begin().await.map_err(Error::Store)?
-            };
+            let conn = self.pool.acquire().await.map_err(Error::Store)?;
+            let mut tx = AppendTransaction::begin(conn, try_condition.is_some())
+                .await
+                .map_err(Error::Store)?;
 
-            let result =
-                match append_events_within_transaction(&mut tx, try_events, try_condition).await {
-                    Ok(sequenced) => tx.commit().await.map(|()| sequenced).map_err(Error::Store),
-                    Err(e) => {
-                        let _ = tx.rollback().await;
-                        Err(e)
-                    }
-                };
+            let result = match append_events_within_transaction(
+                tx.conn(),
+                try_events,
+                try_condition,
+            )
+            .await
+            {
+                Ok(sequenced) => tx.commit().await.map(|()| sequenced).map_err(Error::Store),
+                Err(e) => {
+                    tx.rollback().await;
+                    Err(e)
+                }
+            };
 
             match result {
                 Ok(sequenced) => {
@@ -231,16 +233,93 @@ impl EventStore for PostgresEventStore {
 // Write Path Helpers
 // -----------------------------------------------------------------------------
 
+/// Transaction used by the append path.
+///
+/// `sqlx::Transaction` sends a `ROLLBACK` when a `COMMIT` fails. PostgreSQL
+/// already ended the transaction when `COMMIT` returns an error (a
+/// serialization failure, for example), so that extra `ROLLBACK` logs
+/// `there is no transaction in progress` on every retried append.
+///
+/// This guard commits explicitly, rolls back only while the transaction is
+/// still open, and closes the session instead of returning a poisoned
+/// connection to the pool when its future is cancelled.
+struct AppendTransaction {
+    conn: Option<PoolConnection<Postgres>>,
+    open: bool,
+}
+
+impl AppendTransaction {
+    async fn begin(
+        conn: PoolConnection<Postgres>,
+        serializable: bool,
+    ) -> Result<Self, sqlx::Error> {
+        let mut tx = Self {
+            conn: Some(conn),
+            open: false,
+        };
+
+        let statement = if serializable {
+            "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+        } else {
+            "BEGIN"
+        };
+
+        sqlx::query(statement).execute(tx.conn()).await?;
+        tx.open = true;
+        Ok(tx)
+    }
+
+    fn conn(&mut self) -> &mut PgConnection {
+        match self.conn.as_mut() {
+            Some(conn) => conn,
+            None => unreachable!("append transaction connection was already released"),
+        }
+    }
+
+    async fn commit(mut self) -> Result<(), sqlx::Error> {
+        let result = sqlx::query("COMMIT").execute(self.conn()).await;
+
+        // A failed `COMMIT` still ends the transaction on the server. Closing
+        // the guard here prevents a redundant `ROLLBACK` from being sent.
+        self.open = false;
+        result.map(|_| ())
+    }
+
+    async fn rollback(mut self) {
+        let result = sqlx::query("ROLLBACK").execute(self.conn()).await;
+
+        // Keep `open` when the rollback itself failed so `Drop` closes the
+        // session instead of returning a connection with an open transaction.
+        if result.is_ok() {
+            self.open = false;
+        }
+    }
+}
+
+impl Drop for AppendTransaction {
+    fn drop(&mut self) {
+        if !self.open {
+            return;
+        }
+
+        if let Some(conn) = self.conn.take() {
+            // Closing the session rolls back and keeps the pool clean when the
+            // append future is cancelled between `BEGIN` and `COMMIT`.
+            drop(conn.detach());
+        }
+    }
+}
+
 async fn append_events_within_transaction(
-    tx: &mut Transaction<'static, Postgres>,
+    conn: &mut PgConnection,
     events: Vec<Event>,
     condition: Option<AppendCondition>,
 ) -> Result<Vec<SequencedEvent>, Error<sqlx::Error>> {
     if let Some(condition) = condition {
-        enforce_append_condition(tx, condition).await?;
+        enforce_append_condition(conn, condition).await?;
     }
 
-    execute_bulk_insert(tx, events).await
+    execute_bulk_insert(conn, events).await
 }
 
 async fn enforce_append_condition(

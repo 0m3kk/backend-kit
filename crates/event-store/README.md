@@ -73,6 +73,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
+## 🔒 Conditional appends
+
+Appends with an `AppendCondition` run in a `SERIALIZABLE` transaction, so the
+condition check and the insert are atomic with respect to concurrent appends.
+PostgreSQL can abort concurrent conditional appends with SQLSTATE `40001`
+(serialization failure); the store retries them with exponential backoff (up to
+10 attempts) and only returns the error when every attempt conflicts. Row
+handlers therefore never need to retry a conflicting append themselves.
+
+---
+
 ## 🔔 Notifications
 
 The embedded migrations install an `AFTER INSERT` trigger on `events` that runs
