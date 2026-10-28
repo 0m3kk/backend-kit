@@ -24,6 +24,7 @@ fn serialization_roundtrip() {
         connect_timeout_secs: 15,
         idle_timeout_secs: 120,
         max_lifetime_secs: 600,
+        ssl_mode: postgres_db::SslMode::Require,
     };
 
     #[allow(clippy::unwrap_used)]

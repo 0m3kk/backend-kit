@@ -95,7 +95,9 @@ Each loop:
   the polling ticker as the safety net.
 
 `ProjectionSupervisor::catchup_once(name)` runs a single pass for tests and
-one-shot drains. `rebuild(name)` resets both the view and its checkpoint.
+one-shot drains. `rebuild(name)` resets the checkpoint first and then the view,
+so a crash between the two operations replays against old rows instead of
+leaving an empty view with an advanced checkpoint.
 `WorkerHealth::snapshot()` reports the last applied position, processed count,
 lag, and consecutive errors per view.
 

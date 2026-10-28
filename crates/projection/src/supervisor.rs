@@ -245,12 +245,23 @@ where
 {
     /// Clears one projection and its checkpoint so the next run replays from
     /// the beginning.
+    ///
+    /// The checkpoint is reset first. If the process crashes between the two
+    /// operations, the next run replays from the beginning against the old
+    /// rows; projection writes are idempotent, so that is safe. Resetting the
+    /// view first would leave an empty view with a checkpoint that points past
+    /// every event, and the view would never be rebuilt.
     pub async fn rebuild(&self, name: &str) -> Result<(), SupervisorError> {
         let projection = self
             .projections
             .iter()
             .find(|projection| projection.name() == name)
             .ok_or_else(|| SupervisorError::UnknownProjection(name.to_string()))?;
+
+        self.checkpoints
+            .reset(name)
+            .await
+            .map_err(|error| SupervisorError::Checkpoint(error.to_string()))?;
 
         projection
             .reset()
@@ -259,11 +270,6 @@ where
                 projection: name.to_string(),
                 source,
             })?;
-
-        self.checkpoints
-            .reset(name)
-            .await
-            .map_err(|error| SupervisorError::Checkpoint(error.to_string()))?;
 
         Ok(())
     }
@@ -651,6 +657,7 @@ mod tests {
     struct FakeCheckpointStore {
         position: Arc<AtomicU64>,
         resets: Arc<AtomicU64>,
+        reset_order: Arc<Mutex<Vec<&'static str>>>,
     }
 
     impl FakeCheckpointStore {
@@ -675,6 +682,7 @@ mod tests {
         async fn reset(&self, _view: &str) -> Result<(), Self::Error> {
             self.resets.fetch_add(1, Ordering::SeqCst);
             self.position.store(0, Ordering::SeqCst);
+            lock(&self.reset_order).push("checkpoint");
             Ok(())
         }
     }
@@ -760,6 +768,7 @@ mod tests {
 
         fn reset(&self) -> ProjectionFuture<'_, Result<(), ProjectionError>> {
             self.resets.fetch_add(1, Ordering::SeqCst);
+            lock(&self.checkpoints.reset_order).push("view");
             Box::pin(async { Ok(()) })
         }
     }
@@ -908,6 +917,10 @@ mod tests {
         supervisor.rebuild("test.view").await?;
         assert_eq!(projection.resets.load(Ordering::SeqCst), 1);
         assert_eq!(checkpoints.resets.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            lock(&checkpoints.reset_order).as_slice(),
+            ["checkpoint", "view"]
+        );
         Ok(())
     }
 

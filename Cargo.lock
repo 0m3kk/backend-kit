@@ -2643,6 +2643,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "telemetry",
+ "thiserror 2.0.21",
  "tokio",
  "url",
 ]

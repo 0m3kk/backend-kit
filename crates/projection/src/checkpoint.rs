@@ -137,6 +137,9 @@ impl CheckpointStore for PostgresCheckpointStore {
     }
 
     async fn save(&self, view: &str, position: SequencePosition) -> Result<(), Self::Error> {
+        // Validate before touching the pool so callers get a deterministic
+        // `PositionOverflow` even when the database is unavailable.
+        let _ = i64::try_from(position).map_err(|_| CheckpointError::PositionOverflow)?;
         let mut conn = self.pool.acquire().await?;
         save_in_transaction(&mut conn, view, position).await
     }

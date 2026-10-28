@@ -14,6 +14,7 @@ pub fn connect_options(config: &PostgresConfig, secret: &PostgresSecret) -> PgCo
         .database(&config.database)
         .username(&secret.username)
         .password(&secret.password)
+        .ssl_mode(config.ssl_mode.into())
 }
 
 /// Initializes a PostgreSQL connection pool from config and credentials.
@@ -49,5 +50,9 @@ mod tests {
         assert_eq!(options.get_port(), 5432);
         assert_eq!(options.get_database(), Some("dev"));
         assert_eq!(options.get_username(), "postgres");
+        assert!(matches!(
+            options.get_ssl_mode(),
+            sqlx::postgres::PgSslMode::Prefer
+        ));
     }
 }
