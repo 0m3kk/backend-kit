@@ -13,7 +13,7 @@ thiserror = "2"
 url = { version = "2", features = ["serde"] }
 utoipa = "6"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
-webauthn-rs = { version = "0.5.5", features = ["danger-allow-state-serialisation", "conditional-ui"] }
+webauthn-rs = { version = "0.6.2", features = ["danger-allow-state-serialisation", "conditional-ui"] }
 webauthn-rs-proto = "0.5.5"
 
 [lints.clippy]
